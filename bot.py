@@ -54,11 +54,10 @@ daily_credit_check_running = False
 MAINTENANCE_MODE = False
 
 MAINTENANCE_MESSAGE = """
-⚠️ *BOT UNDER MAINTENANCE*
-
-🛠️ The bot is currently under maintenance.
-
+⚠️ BOT UNDER MAINTENANCE
+🛠️ TraceX is currently under maintenance and upgrades.
 ⏰ Please try again later.
+📢 Till then, join our official channel for updates and announcements: https://t.me/Gaurav_beni_0001
 🙏 Thanks for your patience.
 """
 
