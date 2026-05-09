@@ -25,10 +25,10 @@ ADMIN_CHANNEL_ID = -1003743686626  # Channel for logs
 API_URL = "https://techvishalboss.com/apibuy/public/lookup.php"
 API_KEY = "TVB_Y9T032"
 
-FREE_CREDITS_ON_START = 10  # Permanent credits on start
-DAILY_FREE_CREDIT = 1  # Free daily credit
+FREE_CREDITS_ON_START = 3  # Permanent credits on start
+DAILY_FREE_CREDIT = 0  # Free daily credit
 COOLDOWN_SECONDS = 3
-AUTO_DELETE_SECONDS = 60
+AUTO_DELETE_SECONDS = 120
 ADMIN_USERNAME = "@gaurav\\_beniwal\\_0001"
 BOT_VERSION = "3.1"
 
@@ -48,6 +48,35 @@ user_cooldown = {}
 pending_payments = {}
 temp_data = {}
 daily_credit_check_running = False
+
+# ==================== MAINTENANCE MODE ====================
+
+MAINTENANCE_MODE = False
+
+MAINTENANCE_MESSAGE = """
+⚠️ *BOT UNDER MAINTENANCE*
+
+🛠️ The bot is currently under maintenance.
+
+⏰ Please try again later.
+🙏 Thanks for your patience.
+"""
+
+@bot.message_handler(func=lambda message: MAINTENANCE_MODE and message.from_user.id != 7850023357)
+def maintenance_handler(message):
+    bot.reply_to(message, MAINTENANCE_MESSAGE, parse_mode='Markdown')
+    return
+
+@bot.callback_query_handler(func=lambda call: MAINTENANCE_MODE and call.from_user.id != 7850023357)
+def maintenance_callback(call):
+    bot.answer_callback_query(
+        call.id,
+        "Bot under maintenance 🛠️",
+        show_alert=True
+    )
+    return
+
+MAINTENANCE_MODE = False
 
 # ==================== UNIVERSAL BUTTON SYSTEM ====================
 GROUP_LINK = "https://t.me/Gaurav_beni_0001"
@@ -748,10 +777,50 @@ Your payment screenshot was rejected.
             f"❌ Error: {e}",
             parse_mode='Markdown'
         )
+@bot.message_handler(commands=['maintenance'])
+def toggle_maintenance(message):
+    global MAINTENANCE_MODE
+    
+
+    if message.from_user.id != 7850023357:
+        return
+
+    parts = message.text.split()
+
+    if len(parts) != 2:
+        bot.reply_to(
+            message,
+            "Usage:\n/maintenance on\n/maintenance off"
+        )
+        return
+
+    mode = parts[1].lower()
+
+    if mode == "on":
+        MAINTENANCE_MODE = True
+        bot.reply_to(
+            message,
+            "🛠 Maintenance mode ENABLED"
+        )
+
+    elif mode == "off":
+        MAINTENANCE_MODE = False
+        bot.reply_to(
+            message,
+            "✅ Maintenance mode DISABLED"
+        )
+
+    else:
+        bot.reply_to(
+            message,
+            "Invalid option!\nUse:\n/maintenance on\n/maintenance off"
+        )
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     global message_context
+    global MAINTENANCE_MODE
+    
     message_context = call.message
     
     user_id = call.from_user.id
@@ -949,7 +1018,7 @@ Daily credits expire at midnight if unused!
         confirm_giveaway(call)
         return
     
-    elif call.data in ["admin_add", "admin_remove", "admin_ban", "admin_unban", "admin_broadcast", "admin_stats", "admin_transactions", "admin_back", "admin_giveaway"]:
+    elif call.data in ["admin_add", "admin_remove", "admin_ban", "admin_unban", "admin_broadcast", "admin_stats", "admin_transactions", "admin_back", "admin_giveaway", "maintenance_on", "maintenance_off"]:
         if call.from_user.id != 7850023357:
             return
         
@@ -983,6 +1052,13 @@ Daily credits expire at midnight if unused!
             show_admin_transactions(call.message)
         elif call.data == "admin_back":
             show_admin_panel(call.message)
+        elif call.data == "maintenance_on":
+            MAINTENANCE_MODE = True
+            bot.answer_callback_query(call.id, "🛠 Maintenance Enabled", show_alert=True)
+
+        elif call.data == "maintenance_off":
+            MAINTENANCE_MODE = False
+            bot.answer_callback_query(call.id, "✅ Maintenance Disabled", show_alert=True)    
         
         bot.answer_callback_query(call.id)
         return
@@ -1461,6 +1537,10 @@ def show_admin_panel(message):
         InlineKeyboardButton("📋 TRANSACTIONS", callback_data="admin_transactions")
     )
     markup.add(
+    InlineKeyboardButton("🛠 MAINTENANCE ON", callback_data="maintenance_on"),
+    InlineKeyboardButton("✅ MAINTENANCE OFF", callback_data="maintenance_off")
+    )
+    markup.add(
         InlineKeyboardButton("🔙 BACK", callback_data="main_menu")
     )
     
@@ -1824,9 +1904,9 @@ if __name__ == "__main__":
     
     # Start the daily credit checker thread
     print("🔄 Starting daily credit system...")
-    check_and_give_daily_credits()
+    # check_and_give_daily_credits()
     keep_alive()
-    print("✅ Daily credit system active - will give credits at 12:00 AM daily")
+    print("✅ Daily credit system disabled")
     
     print("✅ Bot is running! Press Ctrl+C to stop.")
     print("=" * 50)
