@@ -22,7 +22,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = -1003743686626
 ADMIN_CHANNEL_ID = -1003743686626  # Channel for logs
 
-API_URL = "https://techvishalboss.com/apibuy/public/lookup.php"
+API_URL = "https://vishalnumberimfoapi.vk177384.workers.dev/"
 API_KEY = "TVB_Y9T032"
 
 FREE_CREDITS_ON_START = 3  # Permanent credits on start
@@ -425,7 +425,7 @@ def get_history(user_id, limit=5):
 
 def lookup_number(phone):
     try:
-        url = f"{API_URL}?key={API_KEY}&service=number&query={phone}"
+        url = f"{API_URL}?number={phone}"
         r = requests.get(url, timeout=10)
         return r.json()
     except Exception as e:
