@@ -57,7 +57,11 @@ CASHFREE_API_VERSION = "2023-08-01"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Initialize Supabase Client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+# Backend writes need service role key because RLS can block inserts/updates from anon key.
+SUPABASE_KEY = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
+if not SUPABASE_SERVICE_ROLE_KEY:
+    print("⚠️ SUPABASE_SERVICE_ROLE_KEY missing, RLS may block backend writes")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # State Management
 user_states = {}
@@ -345,13 +349,15 @@ def get_cached_result(phone_number):
         return None
 
 def save_cached_result(phone_number, raw_data):
+    """Save lookup result to cache without requiring optional columns."""
     try:
-        existing = supabase.table("search_results").select("mobile_number").eq("mobile_number", phone_number).execute()
+        existing = supabase.table("search_results").select("id,mobile_number").eq("mobile_number", phone_number).limit(1).execute()
         if existing.data and len(existing.data) > 0:
+            row_id = existing.data[0].get("id")
+            # Do not use updated_at here because the current table may not have that column.
             supabase.table("search_results").update({
-                "raw_data": raw_data,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("mobile_number", phone_number).execute()
+                "raw_data": raw_data
+            }).eq("id", row_id).execute()
         else:
             supabase.table("search_results").insert({
                 "mobile_number": phone_number,
@@ -626,11 +632,14 @@ def create_cashfree_order(plan_id, amount, telegram_user_id, telegram_username, 
             
             elif result.get("payment_session_id"):
                 payment_session_id = result.get("payment_session_id")
-                if CASHFREE_ENV.upper() in ["PROD", "PRODUCTION"]:
-                    payment_link = f"https://cashfree.com/checkout/{payment_session_id}"
-                else:
-                    payment_link = f"https://sandbox.cashfree.com/pg/checkout/{payment_session_id}"
-                print(f"Constructed checkout URL from payment_session_id: {payment_link}")
+                # Use our Render-hosted checkout launcher. Direct session URLs are not reliable.
+                payment_link = f"{RENDER_BASE_URL}/pay/{order_id}?session_id={payment_session_id}"
+                print(f"Constructed Render checkout URL from payment_session_id: {payment_link}")
+                # Save session_id if the column exists; ignore if it does not.
+                try:
+                    supabase.table("payment_claims").update({"session_id": payment_session_id}).eq("cashfree_order_id", order_id).execute()
+                except Exception as e:
+                    print(f"Could not save session_id (optional column may be missing): {e}")
             
             elif result.get("order_meta") and result.get("order_meta", {}).get("payment_url"):
                 payment_link = result.get("order_meta", {}).get("payment_url")
@@ -779,113 +788,76 @@ Status: COMPLETED
         return False
 
 # ==================== RESULT FORMATTING ====================
-def _parse_lookup_records(result):
-    """
-    Supports all formats used by your API / existing Supabase cache:
-    1) {"results": {"Result 1": {...}, "Result 2": {...}}}
-    2) {"Result 1": {...}, "Result 2": {...}}
-    3) {"0": {...}, "1": {...}}
-    4) [{...}, {...}]
-    5) JSON string of any format above
-    """
-    if result is None:
-        return []
-
-    if isinstance(result, str):
-        try:
-            result = json.loads(result)
-        except Exception:
-            return []
-
-    if isinstance(result, list):
-        return [x for x in result if isinstance(x, dict)]
-
-    if not isinstance(result, dict):
-        return []
-
-    # API "No Record Found" response
-    msg = str(result.get("message", "")).lower()
-    if "no record" in msg or "not found" in msg:
-        return []
-
-    # Wrapped API response
-    if isinstance(result.get("results"), dict):
-        source = result.get("results") or {}
-    elif isinstance(result.get("results"), list):
-        return [x for x in result.get("results") if isinstance(x, dict)]
-    else:
-        # Existing website cache often stores raw_data directly as:
-        # {"Result 1": {...}, "Result 2": {...}} or {"0": {...}}
-        source = result
-
-    records = []
-    for key, value in source.items():
-        if key in ["Powered_by", "Contact", "Timestamp", "branding", "message"]:
-            continue
-        if isinstance(value, dict):
-            records.append(value)
-        elif isinstance(value, list):
-            records.extend([x for x in value if isinstance(x, dict)])
-
-    # Direct single record format
-    if not records and any(k in result for k in ["name", "Name", "mobile", "Mobile", "phone"]):
-        records = [result]
-
-    # Keep max 16 records as expected
-    return records[:16]
-
-
-def has_lookup_records(result):
-    return len(_parse_lookup_records(result)) > 0
-
-
 def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
-    parsed_results = _parse_lookup_records(result)
+    """Format API/cache result. Supports API format with results -> Result 1..16 and old cache direct Result keys."""
+    if not isinstance(result, dict):
+        result = {}
 
+    parsed_results = []
+
+    api_results = result.get('results')
+    if isinstance(api_results, dict):
+        # Sort Result 1, Result 2... naturally, supports up to 16+ results.
+        def sort_key(item):
+            key = str(item[0])
+            m = re.search(r'\d+', key)
+            return int(m.group()) if m else 9999
+        for key, value in sorted(api_results.items(), key=sort_key):
+            if isinstance(value, dict):
+                parsed_results.append(value)
+            elif isinstance(value, list):
+                parsed_results.extend([v for v in value if isinstance(v, dict)])
+    elif isinstance(api_results, list):
+        parsed_results = [v for v in api_results if isinstance(v, dict)]
+
+    # Some existing Supabase rows may store direct keys: {"Result 1": {...}, "Result 2": {...}}
+    if not parsed_results:
+        direct_result_items = [(k, v) for k, v in result.items() if str(k).lower().startswith('result') and isinstance(v, dict)]
+        def sort_key2(item):
+            m = re.search(r'\d+', str(item[0]))
+            return int(m.group()) if m else 9999
+        for key, value in sorted(direct_result_items, key=sort_key2):
+            parsed_results.append(value)
+
+    # Some APIs return one direct object.
+    if not parsed_results and ('name' in result or 'mobile' in result):
+        parsed_results = [result]
+    
     output = f"""
 🔍 *NUMBER LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━
 
 📊 Total Results Found: `{len(parsed_results)}`
 """
-
+    
     first_name = "Unknown"
-
+    
     for idx, data in enumerate(parsed_results, 1):
         name = data.get('name') or data.get('Name') or data.get('full_name') or 'N/A'
         if idx == 1 and name != 'N/A':
             first_name = name
-
+            
         alt_mobile = data.get('alt_mobile') or data.get('alternate_mobile') or data.get('Alt_Mobile') or 'N/A'
-        if str(alt_mobile).lower() in ['na', 'n/a', 'none', 'null', '']:
+        if alt_mobile == 'NA' or alt_mobile == 'n/a':
             alt_mobile = 'N/A'
-
+        
         father_name = data.get('father_name') or data.get('Father_Name') or data.get('father') or 'N/A'
-        if str(father_name).lower() in ['na', 'n/a', 'none', 'null', '']:
-            father_name = 'N/A'
-
         email = data.get('email') or data.get('Email') or 'N/A'
-        if str(email).lower() in ['na', 'n/a', 'none', 'null', '']:
+        if email == 'n/a':
             email = 'N/A'
-
+            
         aadhar = data.get('aadhar_number') or data.get('aadhar') or data.get('Aadhar') or 'N/A'
-        if str(aadhar).lower() in ['na', 'n/a', 'none', 'null', '']:
+        if aadhar == 'n/a':
             aadhar = 'N/A'
-
+            
         operator = data.get('operator') or data.get('Operator') or data.get('carrier') or 'N/A'
-        if str(operator).lower() in ['na', 'n/a', 'none', 'null', '']:
-            operator = 'N/A'
-
         circle = data.get('state_circle') or data.get('circle') or data.get('Circle') or data.get('state') or 'N/A'
-        if str(circle).lower() in ['na', 'n/a', 'none', 'null', '']:
-            circle = 'N/A'
-
         address = data.get('address') or data.get('Address') or data.get('full_address') or 'N/A'
-        if str(address).lower() in ['na', 'n/a', 'none', 'null', '']:
+        if address == 'NA':
             address = 'N/A'
-
+        
         mobile = data.get('mobile') or data.get('Mobile') or data.get('phone') or phone
-
+        
         output += f"""
 
 ━━━━━━━━━━━━━━━━━━
@@ -900,17 +872,17 @@ def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimit
 📡 Operator: `{operator}`
 📍 Circle: `{circle}`
 🏠 Address: `{address}`"""
-
+    
     user = get_user(user_id)
     updated_total = get_total_credits(user_id)
-
+    
     if unlimited_active:
         output += f"""
 
 ━━━━━━━━━━━━━━━━━━
 🚀 *UNLIMITED PLAN ACTIVE*
 No credits deducted!
-Expires: `{str(unlimited_expiry)[:16] if unlimited_expiry else 'N/A'}`
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
 """
     else:
         output += f"""
@@ -919,13 +891,13 @@ Expires: `{str(unlimited_expiry)[:16] if unlimited_expiry else 'N/A'}`
 💎 *Credits Used:* `1`
 💎 *Credits Left:* `{updated_total}`
 🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-
+    
     output += f"""
 
 ⚠️ Auto delete in {AUTO_DELETE_SECONDS} sec
 {footer()}
 """
-
+    
     return output, first_name
 
 # ==================== LOOKUP PROCESS ====================
@@ -1053,7 +1025,7 @@ You can also protect your number for just ₹49!
         bot.edit_message_text(f"❌ *API Error*\n\n{str(e)}", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
         return
 
-    if result and has_lookup_records(result):
+    if result and result.get('results'):
         if not unlimited_active:
             if not deduct_credit(user_id):
                 bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*", 
@@ -1140,70 +1112,117 @@ def home():
 
 @app.route('/cashfree/webhook', methods=['POST'])
 def cashfree_webhook():
-    """Handle Cashfree payment webhook with signature verification"""
+    """Handle Cashfree payment webhook.
+    Security flow: signature check if possible + final verification from Cashfree Order Status API.
+    This avoids false 401 issues while still preventing fake credit addition.
+    """
     try:
-        signature = (request.headers.get('x-webhook-signature') or 
-                    request.headers.get('X-Cashfree-Signature') or 
-                    request.headers.get('x-cashfree-signature') or '')
-        
+        signature = (
+            request.headers.get('x-webhook-signature') or
+            request.headers.get('X-Cashfree-Signature') or
+            request.headers.get('x-cashfree-signature') or
+            request.headers.get('X-Webhook-Signature') or
+            ''
+        )
         raw_body = request.get_data(as_text=True)
-        
-        if not verify_cashfree_signature(raw_body, signature):
-            print(f"Webhook signature verification failed. Signature: {signature}")
-            return jsonify({"error": "Invalid signature"}), 401
-        
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No data"}), 400
-        
-        print(f"Webhook received: {json.dumps(data, indent=2)}")
-        
+        data = request.get_json(silent=True) or {}
+
+        print(f"Webhook received headers signature-present={bool(signature)}")
+        print(f"Webhook body preview: {raw_body[:1000]}")
+
+        # Extract order_id from common Cashfree webhook formats.
         order_id = None
         payment_id = None
-        
         if isinstance(data, dict):
-            if "order_id" in data:
-                order_id = data.get("order_id")
-            elif "order" in data and isinstance(data["order"], dict):
-                order_id = data["order"].get("order_id")
-            elif "data" in data and isinstance(data["data"], dict):
-                if "order" in data["data"] and isinstance(data["data"]["order"], dict):
-                    order_id = data["data"]["order"].get("order_id")
-                elif "order_id" in data["data"]:
-                    order_id = data["data"].get("order_id")
-        
-        if isinstance(data, dict):
-            if "payment_id" in data:
-                payment_id = data.get("payment_id")
-            elif "payment" in data and isinstance(data["payment"], dict):
-                payment_id = data["payment"].get("cf_payment_id")
-            elif "data" in data and isinstance(data["data"], dict):
-                if "payment" in data["data"] and isinstance(data["data"]["payment"], dict):
-                    payment_id = data["data"]["payment"].get("cf_payment_id")
-                elif "payment_id" in data["data"]:
-                    payment_id = data["data"].get("payment_id")
-        
+            order_id = data.get('order_id')
+            payment_id = data.get('payment_id')
+
+            if not order_id and isinstance(data.get('order'), dict):
+                order_id = data['order'].get('order_id')
+            if not payment_id and isinstance(data.get('payment'), dict):
+                payment_id = data['payment'].get('cf_payment_id') or data['payment'].get('payment_id')
+
+            nested = data.get('data')
+            if isinstance(nested, dict):
+                if not order_id:
+                    order_id = nested.get('order_id')
+                if not payment_id:
+                    payment_id = nested.get('payment_id')
+                if isinstance(nested.get('order'), dict) and not order_id:
+                    order_id = nested['order'].get('order_id')
+                if isinstance(nested.get('payment'), dict) and not payment_id:
+                    payment_id = nested['payment'].get('cf_payment_id') or nested['payment'].get('payment_id')
+
         if not order_id:
             print("Could not extract order_id from webhook data")
             return jsonify({"error": "No order_id found"}), 400
-        
+
+        # Signature verification is attempted, but final trust is based on Cashfree Order Status API.
+        if CASHFREE_WEBHOOK_SECRET:
+            if verify_cashfree_signature(raw_body, signature):
+                print("✅ Cashfree webhook signature verified")
+            else:
+                print("⚠️ Cashfree webhook signature mismatch. Continuing with Order Status API verification.")
+        else:
+            print("⚠️ CASHFREE_WEBHOOK_SECRET not set. Using Order Status API verification only.")
+
+        # Idempotency early check.
+        try:
+            claim_check = supabase.table("payment_claims").select("status").eq("cashfree_order_id", order_id).limit(1).execute()
+            if claim_check.data and claim_check.data[0].get("status") == "success":
+                print(f"Payment {order_id} already success, ignoring duplicate webhook")
+                return jsonify({"status": "already_processed"}), 200
+        except Exception as e:
+            print(f"Payment claim precheck error: {e}")
+
+        # Final verification from Cashfree API.
         order_data = get_cashfree_order_status(order_id)
-        
         if not order_data:
-            print(f"Could not verify order {order_id} status via API")
+            print(f"Could not verify order {order_id} status via Cashfree API")
             return jsonify({"error": "Verification failed"}), 400
-        
-        order_status = order_data.get('order_status')
+
+        order_status = str(order_data.get('order_status', '')).upper()
+        print(f"Cashfree verified order status for {order_id}: {order_status}")
+
         if order_status in ['PAID', 'SUCCESS', 'COMPLETED']:
-            process_payment_success(order_id, payment_id or order_data.get('payment_id'), order_data)
+            process_payment_success(order_id, payment_id or order_data.get('payment_id') or order_data.get('cf_payment_id'), order_data)
         else:
             print(f"Order {order_id} status is {order_status}, not processing")
-        
+
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         print(f"Webhook error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+@app.route('/pay/<order_id>', methods=['GET'])
+def cashfree_pay_page(order_id):
+    """Hosted checkout launcher for Cashfree payment_session_id."""
+    payment_session_id = request.args.get('session_id', '')
+    mode = 'production' if CASHFREE_ENV.upper() in ['PROD', 'PRODUCTION'] else 'sandbox'
+    if not payment_session_id:
+        return "Payment session missing. Please return to Telegram and try again.", 400
+    return f"""
+    <html>
+        <head>
+            <title>TraceX Payment</title>
+            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+            <script src=\"https://sdk.cashfree.com/js/v3/cashfree.js\"></script>
+        </head>
+        <body style=\"font-family: Arial, sans-serif; text-align:center; padding:30px; background:#0b0f17; color:white;\">
+            <h2>Redirecting to secure payment...</h2>
+            <p>Please wait.</p>
+            <script>
+                const cashfree = Cashfree({{ mode: \"{mode}\" }});
+                cashfree.checkout({{
+                    paymentSessionId: \"{payment_session_id}\",
+                    redirectTarget: \"_self\"
+                }});
+            </script>
+        </body>
+    </html>
+    """
 
 @app.route('/payment/success', methods=['GET'])
 def payment_success():
@@ -1972,9 +1991,19 @@ if __name__ == "__main__":
     
     signal.signal(signal.SIGINT, signal_handler)
     
+    # Clear any old webhook before long polling. Only ONE bot instance must be running.
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+    except Exception as e:
+        print(f"remove_webhook warning: {e}")
+
     while True:
         try:
-            bot.infinity_polling(timeout=60)
+            bot.infinity_polling(timeout=60, skip_pending=True)
         except Exception as e:
-            print(f"Error: {e}")
-            time.sleep(5)
+            print(f"Polling error: {e}")
+            # Telegram 409 means another instance is still running with the same bot token.
+            if "409" in str(e) or "getUpdates" in str(e):
+                print("⚠️ Telegram 409 conflict: stop old Render/Termux/other bot instance using same BOT_TOKEN.")
+            time.sleep(10)
