@@ -51,13 +51,19 @@ RENDER_BASE_URL = os.getenv("RENDER_BASE_URL", "https://your-app.onrender.com")
 
 # Cashfree API URLs - will be set dynamically
 CASHFREE_API_BASE = None
-CASHFREE_API_VERSION = "2023-08-01"
+CASHFREE_API_VERSION = os.getenv("CASHFREE_API_VERSION", "2025-01-01")
 
 # Initialize Bot
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Initialize Supabase Client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+# IMPORTANT: use service role key on Render if your tables have RLS enabled.
+# Do NOT put service role key in frontend/website. Backend Render env only.
+supabase_key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
+if not SUPABASE_URL or not supabase_key:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY are required")
+supabase: Client = create_client(SUPABASE_URL, supabase_key)
+print("Supabase mode:", "SERVICE_ROLE" if SUPABASE_SERVICE_ROLE_KEY else "ANON")
 
 # State Management
 user_states = {}
@@ -485,183 +491,191 @@ def verify_cashfree_signature(raw_body, signature):
         print(f"Signature verification error: {e}")
         return False
 
+def cashfree_api_base():
+    """Return Cashfree PG base URL based on env."""
+    env_upper = (CASHFREE_ENV or "TEST").upper()
+    if env_upper in ["PROD", "PRODUCTION", "LIVE"]:
+        return "https://api.cashfree.com/pg"
+    return "https://sandbox.cashfree.com/pg"
+
+
+def cashfree_headers():
+    return {
+        "x-client-id": CASHFREE_APP_ID or "",
+        "x-client-secret": CASHFREE_SECRET_KEY or "",
+        "x-api-version": CASHFREE_API_VERSION,
+        "Content-Type": "application/json",
+    }
+
+
 def get_cashfree_order_status(order_id):
-    """Get order status from Cashfree API"""
+    """Fetch Cashfree payment link status. Returns normalized dict."""
     try:
-        # Determine API URL based on environment
-        env_upper = CASHFREE_ENV.upper()
-        if env_upper in ["PROD", "PRODUCTION"]:
-            api_base = "https://api.cashfree.com/pg"
-        else:
-            api_base = "https://sandbox.cashfree.com/pg"
-        
-        headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION,
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.get(f"{api_base}/orders/{order_id}", headers=headers, timeout=30)
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"Cashfree status API error: {response.status_code} - {response.text}")
+        if not order_id:
             return None
+        if not CASHFREE_APP_ID or not CASHFREE_SECRET_KEY:
+            print("Cashfree credentials missing while checking status")
+            return None
+
+        api_base = cashfree_api_base()
+        response = requests.get(f"{api_base}/links/{order_id}", headers=cashfree_headers(), timeout=30)
+        print(f"Cashfree link status HTTP {response.status_code}: {response.text[:800]}")
+
+        if response.status_code == 200:
+            data = response.json()
+            # Normalize for old code that expects order_status
+            amount = float(data.get("link_amount") or 0)
+            paid = float(data.get("link_amount_paid") or 0)
+            link_status = (data.get("link_status") or "").upper()
+            paid_enough = paid >= amount and amount > 0
+            if link_status in ["PAID", "SUCCESS", "COMPLETED"] or paid_enough:
+                data["order_status"] = "PAID"
+            else:
+                data["order_status"] = link_status or "PENDING"
+            data["payment_id"] = data.get("cf_link_id") or data.get("link_id") or order_id
+            return data
+
+        # Fallback: if older order API was used accidentally
+        response2 = requests.get(f"{api_base}/orders/{order_id}", headers=cashfree_headers(), timeout=30)
+        print(f"Cashfree order status HTTP {response2.status_code}: {response2.text[:800]}")
+        if response2.status_code == 200:
+            return response2.json()
+        return None
     except Exception as e:
-        print(f"Get order status error: {e}")
+        print(f"Get Cashfree status error: {e}")
         return None
 
+
 def create_cashfree_order(plan_id, amount, telegram_user_id, telegram_username, payment_for=None, protected_number=None):
-    """Create a real Cashfree order and return payment link"""
+    """Create a real Cashfree Payment Link and return (link_id, link_url)."""
     try:
-        # Validate Cashfree credentials
         if not CASHFREE_APP_ID or not CASHFREE_SECRET_KEY:
-            print("ERROR: Cashfree credentials missing! CASHFREE_APP_ID and CASHFREE_SECRET_KEY must be set in environment variables.")
+            print("ERROR: Cashfree credentials missing: set CASHFREE_APP_ID and CASHFREE_SECRET_KEY")
             return None, None
-        
-        if not RENDER_BASE_URL or RENDER_BASE_URL == "https://your-app.onrender.com":
-            print("WARNING: RENDER_BASE_URL not set properly. Using placeholder.")
-        
-        # Determine API URL based on environment
-        env_upper = CASHFREE_ENV.upper()
-        if env_upper in ["PROD", "PRODUCTION"]:
-            CASHFREE_API_BASE = "https://api.cashfree.com/pg"
-            print(f"Using PRODUCTION Cashfree API: {CASHFREE_API_BASE}")
-        else:
-            CASHFREE_API_BASE = "https://sandbox.cashfree.com/pg"
-            print(f"Using SANDBOX Cashfree API: {CASHFREE_API_BASE}")
-        
-        order_id = f"TX_{telegram_user_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-        print(f"Creating order: {order_id} for user {telegram_user_id}, amount: ₹{amount}, plan: {plan_id}")
-        
-        # Store pending payment in Supabase
+        if not RENDER_BASE_URL or "your-app.onrender.com" in RENDER_BASE_URL:
+            print("ERROR: RENDER_BASE_URL is not set correctly")
+            return None, None
+
+        api_base = cashfree_api_base()
+        # Cashfree link_id allows alphanumeric, hyphen and underscore; max 50 chars.
+        link_id = f"TX_{telegram_user_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"[:50]
+        idempotency_key = str(uuid.uuid4())
+        print(f"Creating Cashfree payment link {link_id} for user={telegram_user_id}, plan={plan_id}, amount={amount}")
+
+        credits_map = {"c10": 10, "c50": 50, "c100": 100}
+        credits = credits_map.get(plan_id)
+        if payment_for is None:
+            if plan_id in credits_map:
+                payment_for = "credits"
+            elif plan_id in ["u1h", "u1d", "u1w", "u1m"]:
+                payment_for = "unlimited"
+            elif plan_id == "protect49":
+                payment_for = "protect_number"
+            else:
+                payment_for = "unknown"
+
         payment_data = {
-            "payment_id": order_id,
-            "cashfree_order_id": order_id,
-            "telegram_user_id": telegram_user_id,
-            "telegram_username": telegram_username,
+            "payment_id": link_id,
+            "cashfree_order_id": link_id,
+            "telegram_user_id": int(telegram_user_id),
+            "telegram_username": telegram_username or "no_username",
             "plan_id": plan_id,
             "amount": amount,
+            "credits": credits,
             "status": "pending",
             "payment_for": payment_for,
             "protected_number": protected_number,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "idempotency_key": idempotency_key,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        
-        # Add credits if applicable
-        if plan_id == "c10":
-            payment_data["credits"] = 10
-        elif plan_id == "c50":
-            payment_data["credits"] = 50
-        elif plan_id == "c100":
-            payment_data["credits"] = 100
-        
-        # Insert into Supabase
-        supabase.table("payment_claims").insert(payment_data).execute()
-        print(f"Payment claim stored in Supabase with ID: {order_id}")
-        
-        # Prepare customer details
-        customer_name = telegram_username if telegram_username and telegram_username != "no_username" else f"User_{telegram_user_id}"
+
+        try:
+            supabase.table("payment_claims").insert(payment_data).execute()
+            print("Payment claim inserted in Supabase")
+        except Exception as db_err:
+            print("CRITICAL: Could not insert payment_claims. This is usually Supabase RLS.")
+            print("Fix: add SUPABASE_SERVICE_ROLE_KEY in Render env, or create RLS policies.")
+            print(f"DB error: {db_err}")
+            return None, None
+
+        username_clean = (telegram_username or "").replace("@", "")
+        customer_name = username_clean if username_clean and username_clean != "no_username" else f"User {telegram_user_id}"
         customer_name = customer_name[:100]
-        
-        # Prepare payload for Cashfree
+
+        purpose_map = {
+            "c10": "TraceX 10 Credits",
+            "c50": "TraceX 50 Credits",
+            "c100": "TraceX 100 Credits",
+            "u1h": "TraceX 1 Hour Unlimited",
+            "u1d": "TraceX 1 Day Unlimited",
+            "u1w": "TraceX 7 Days Unlimited",
+            "u1m": "TraceX 30 Days Unlimited",
+            "protect49": f"TraceX Number Protection {protected_number or ''}".strip(),
+        }
+
+        expiry_time = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
         payload = {
-            "order_id": order_id,
-            "order_amount": amount,
-            "order_currency": "INR",
+            "link_id": link_id,
+            "link_amount": float(amount),
+            "link_currency": "INR",
+            "link_purpose": purpose_map.get(plan_id, f"TraceX {plan_id}"),
+            "link_partial_payments": False,
+            "link_auto_reminders": False,
+            "link_expiry_time": expiry_time,
             "customer_details": {
-                "customer_id": str(telegram_user_id),
                 "customer_name": customer_name,
                 "customer_phone": "9999999999",
-                "customer_email": f"user_{telegram_user_id}@example.com"
+                "customer_email": f"tg_{telegram_user_id}@tracex.local",
             },
-            "order_meta": {
-                "return_url": f"{RENDER_BASE_URL}/payment/success?order_id={order_id}",
-                "notify_url": f"{RENDER_BASE_URL}/cashfree/webhook"
-            }
+            "link_notify": {
+                "send_sms": False,
+                "send_email": False,
+            },
+            "link_notes": {
+                "telegram_user_id": str(telegram_user_id),
+                "plan_id": str(plan_id),
+                "payment_for": str(payment_for),
+                "protected_number": str(protected_number or ""),
+            },
+            "link_meta": {
+                "return_url": f"{RENDER_BASE_URL}/payment/success?order_id={link_id}",
+                "notify_url": f"{RENDER_BASE_URL}/cashfree/webhook",
+                "upi_intent": False,
+            },
         }
-        
-        # Headers for Cashfree API
-        headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION,
-            "Content-Type": "application/json"
-        }
-        
-        # Make API call to Cashfree
-        api_url = f"{CASHFREE_API_BASE}/orders"
-        print(f"Calling Cashfree API: {api_url}")
-        
+
+        headers = cashfree_headers()
+        headers["x-idempotency-key"] = idempotency_key
+        api_url = f"{api_base}/links"
         response = requests.post(api_url, json=payload, headers=headers, timeout=30)
-        
-        # Log response details
-        print(f"Cashfree Response Status Code: {response.status_code}")
-        print(f"Cashfree Response Body (first 1000 chars): {response.text[:1000]}")
-        
-        if response.status_code == 200:
+        print(f"Cashfree create link HTTP {response.status_code}: {response.text[:1500]}")
+
+        if response.status_code in [200, 201]:
             result = response.json()
-            print(f"Cashfree order created successfully: {result.get('order_id')}")
-            
-            # Extract payment link from response
-            payment_link = None
-            
-            if result.get("payment_link"):
-                payment_link = result.get("payment_link")
-                print(f"Found payment_link: {payment_link}")
-            
-            elif result.get("payments") and isinstance(result.get("payments"), dict):
-                payment_link = result.get("payments", {}).get("url")
-                if payment_link:
-                    print(f"Found payments.url: {payment_link}")
-            
-            elif result.get("order_meta") and isinstance(result.get("order_meta"), dict):
-                payment_methods = result.get("order_meta", {}).get("payment_methods")
-                if isinstance(payment_methods, dict) and payment_methods.get("payment_url"):
-                    payment_link = payment_methods.get("payment_url")
-                    if payment_link:
-                        print(f"Found payment_methods.payment_url: {payment_link}")
-            
-            elif result.get("payment_session_id"):
-                payment_session_id = result.get("payment_session_id")
-                if CASHFREE_ENV.upper() in ["PROD", "PRODUCTION"]:
-                    payment_link = f"https://cashfree.com/checkout/{payment_session_id}"
-                else:
-                    payment_link = f"https://sandbox.cashfree.com/pg/checkout/{payment_session_id}"
-                print(f"Constructed checkout URL from payment_session_id: {payment_link}")
-            
-            elif result.get("order_meta") and result.get("order_meta", {}).get("payment_url"):
-                payment_link = result.get("order_meta", {}).get("payment_url")
-                print(f"Found order_meta.payment_url: {payment_link}")
-            
-            if payment_link:
-                print(f"✅ Payment link created successfully: {payment_link}")
-                return order_id, payment_link
-            else:
-                print(f"❌ No payment link found in response. Full response: {json.dumps(result, indent=2)}")
-                return None, None
-                
-        elif response.status_code == 401:
-            print("❌ Cashfree authentication failed. Check CASHFREE_APP_ID and CASHFREE_SECRET_KEY.")
-            print("Make sure you're using correct credentials for the environment:", CASHFREE_ENV)
+            link_url = result.get("link_url")
+            if link_url:
+                supabase.table("payment_claims").update({
+                    "raw_response": result,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("cashfree_order_id", link_id).execute()
+                print(f"✅ Payment link created: {link_url}")
+                return link_id, link_url
+            print(f"❌ Cashfree response did not include link_url: {json.dumps(result)[:1500]}")
             return None, None
-        elif response.status_code == 422:
-            print(f"❌ Cashfree validation error: {response.text}")
-            return None, None
-        else:
-            print(f"❌ Cashfree API error {response.status_code}: {response.text}")
-            return None, None
-            
-    except requests.exceptions.Timeout:
-        print("❌ Cashfree API timeout after 30 seconds")
-        return None, None
-    except requests.exceptions.ConnectionError:
-        print("❌ Cannot connect to Cashfree API. Check internet connection.")
+
+        print(f"❌ Cashfree link create failed: {response.status_code} {response.text[:1500]}")
+        try:
+            supabase.table("payment_claims").update({
+                "status": "failed_to_create",
+                "raw_response": {"status_code": response.status_code, "body": response.text[:3000]},
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("cashfree_order_id", link_id).execute()
+        except Exception as update_err:
+            print(f"Could not mark failed payment claim: {update_err}")
         return None, None
     except Exception as e:
-        print(f"❌ Create order error: {e}")
+        print(f"❌ Create Cashfree payment link error: {e}")
         import traceback
         traceback.print_exc()
         return None, None
@@ -954,8 +968,7 @@ You can also protect your number for just ₹49!
                                     message.chat.id, loading_msg.message_id, parse_mode='Markdown')
                 return
         
-        if not unlimited_active:
-            increment_total_searches(user_id)
+        increment_total_searches(user_id)
         
         output, first_name = format_lookup_result(cached_result, phone, user_id, unlimited_active, unlimited_expiry)
         
@@ -1087,66 +1100,86 @@ def home():
 
 @app.route('/cashfree/webhook', methods=['POST'])
 def cashfree_webhook():
-    """Handle Cashfree payment webhook with signature verification"""
+    """Handle Cashfree payment/webhook. Final verification is done using Cashfree Fetch Payment Link API."""
     try:
-        signature = (request.headers.get('x-webhook-signature') or 
-                    request.headers.get('X-Cashfree-Signature') or 
-                    request.headers.get('x-cashfree-signature') or '')
-        
+        signature = (
+            request.headers.get('x-webhook-signature') or
+            request.headers.get('X-Cashfree-Signature') or
+            request.headers.get('x-cashfree-signature') or
+            request.headers.get('X-Webhook-Signature') or
+            ''
+        )
         raw_body = request.get_data(as_text=True)
-        
-        if not verify_cashfree_signature(raw_body, signature):
-            print(f"Webhook signature verification failed. Signature: {signature}")
-            return jsonify({"error": "Invalid signature"}), 401
-        
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No data"}), 400
-        
-        print(f"Webhook received: {json.dumps(data, indent=2)}")
-        
-        order_id = None
-        payment_id = None
-        
-        if isinstance(data, dict):
-            if "order_id" in data:
-                order_id = data.get("order_id")
-            elif "order" in data and isinstance(data["order"], dict):
-                order_id = data["order"].get("order_id")
-            elif "data" in data and isinstance(data["data"], dict):
-                if "order" in data["data"] and isinstance(data["data"]["order"], dict):
-                    order_id = data["data"]["order"].get("order_id")
-                elif "order_id" in data["data"]:
-                    order_id = data["data"].get("order_id")
-        
-        if isinstance(data, dict):
-            if "payment_id" in data:
-                payment_id = data.get("payment_id")
-            elif "payment" in data and isinstance(data["payment"], dict):
-                payment_id = data["payment"].get("cf_payment_id")
-            elif "data" in data and isinstance(data["data"], dict):
-                if "payment" in data["data"] and isinstance(data["data"]["payment"], dict):
-                    payment_id = data["data"]["payment"].get("cf_payment_id")
-                elif "payment_id" in data["data"]:
-                    payment_id = data["data"].get("payment_id")
-        
+
+        # Do not trust webhook body alone. Signature is checked when available, but final decision is Cashfree API status.
+        if CASHFREE_WEBHOOK_SECRET and signature:
+            if not verify_cashfree_signature(raw_body, signature):
+                print("Webhook signature check failed; will still verify using Cashfree status API before any action.")
+        elif CASHFREE_WEBHOOK_SECRET and not signature:
+            print("Webhook signature header not present; will verify using Cashfree status API before any action.")
+
+        data = request.get_json(silent=True) or {}
+        print(f"Webhook received: {json.dumps(data)[:2000]}")
+
+        def deep_get(obj, path):
+            cur = obj
+            for key in path:
+                if not isinstance(cur, dict):
+                    return None
+                cur = cur.get(key)
+            return cur
+
+        # Payment Link webhooks can send link_id; Order webhooks can send order_id.
+        order_id = (
+            data.get("link_id") or
+            data.get("order_id") or
+            deep_get(data, ["link", "link_id"]) or
+            deep_get(data, ["data", "link", "link_id"]) or
+            deep_get(data, ["data", "link_id"]) or
+            deep_get(data, ["order", "order_id"]) or
+            deep_get(data, ["data", "order", "order_id"]) or
+            deep_get(data, ["data", "order_id"])
+        )
+        payment_id = (
+            data.get("cf_payment_id") or
+            data.get("payment_id") or
+            deep_get(data, ["payment", "cf_payment_id"]) or
+            deep_get(data, ["data", "payment", "cf_payment_id"]) or
+            deep_get(data, ["data", "payment_id"]) or
+            deep_get(data, ["data", "payment", "payment_id"])
+        )
+
         if not order_id:
-            print("Could not extract order_id from webhook data")
-            return jsonify({"error": "No order_id found"}), 400
-        
-        order_data = get_cashfree_order_status(order_id)
-        
-        if not order_data:
-            print(f"Could not verify order {order_id} status via API")
-            return jsonify({"error": "Verification failed"}), 400
-        
-        order_status = order_data.get('order_status')
-        if order_status in ['PAID', 'SUCCESS', 'COMPLETED']:
-            process_payment_success(order_id, payment_id or order_data.get('payment_id'), order_data)
+            print("Could not extract link_id/order_id from webhook. Ignoring safely.")
+            return jsonify({"status": "ignored", "reason": "no_order_id"}), 200
+
+        claim_resp = supabase.table("payment_claims").select("status").eq("cashfree_order_id", order_id).execute()
+        if claim_resp.data and claim_resp.data[0].get("status") == "success":
+            print(f"Payment {order_id} already processed. Idempotent OK.")
+            return jsonify({"status": "already_processed"}), 200
+
+        verified_data = get_cashfree_order_status(order_id)
+        if not verified_data:
+            print(f"Could not verify Cashfree status for {order_id}")
+            return jsonify({"status": "pending", "reason": "verification_failed"}), 200
+
+        status = (verified_data.get("order_status") or verified_data.get("link_status") or "").upper()
+        paid_amount = float(verified_data.get("link_amount_paid") or 0)
+        link_amount = float(verified_data.get("link_amount") or 0)
+        is_paid = status in ["PAID", "SUCCESS", "COMPLETED"] or (link_amount > 0 and paid_amount >= link_amount)
+
+        if is_paid:
+            process_payment_success(order_id, payment_id or verified_data.get("payment_id") or verified_data.get("cf_link_id"), verified_data)
+        elif status in ["FAILED", "CANCELLED", "EXPIRED"]:
+            supabase.table("payment_claims").update({
+                "status": status.lower(),
+                "raw_response": verified_data,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("cashfree_order_id", order_id).execute()
+            print(f"Payment {order_id} marked {status}")
         else:
-            print(f"Order {order_id} status is {order_status}, not processing")
-        
+            print(f"Payment {order_id} not paid yet. Status={status}, paid={paid_amount}/{link_amount}")
+
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         print(f"Webhook error: {e}")
