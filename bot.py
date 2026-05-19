@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase + Website Payment Sessions
-Version: 5.0 - Website Session Payment Flow
+Version: 5.3 - Stateless Website Payment Link Flow
 """
 
 import telebot
@@ -18,6 +18,7 @@ import uuid
 import hmac
 import hashlib
 import json
+from urllib.parse import urlencode, quote_plus
 from flask import Flask, request, jsonify
 from supabase import create_client, Client
 
@@ -26,7 +27,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7850023357"))
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "-1003743686626"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@gaurav_beniwal_0001")
-BOT_VERSION = "5.2"
+BOT_VERSION = "5.3"
 
 # Lookup API Configuration
 LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/apibuy/public/lookup.php")
@@ -45,6 +46,10 @@ TELEGRAM_PAYMENT_BASE_URL = os.getenv("PAYMENT_BASE_URL", "https://tracexnumber-
 CASHFREE_RETURN_BASE_URL = os.getenv("CASHFREE_RETURN_BASE_URL", "https://tracexnumber.web.app")
 # Approved website domain. Telegram payment checkout opens here; Render only creates sessions and stores data.
 WEBSITE_PAYMENT_BASE_URL = os.getenv("WEBSITE_PAYMENT_BASE_URL", CASHFREE_RETURN_BASE_URL).rstrip("/")
+# Stateless Telegram payment links: bot does NOT create rows in telegram_payment_sessions anymore.
+# Website must verify this signature server-side using the same TELEGRAM_PAYMENT_LINK_SECRET.
+TELEGRAM_PAYMENT_LINK_SECRET = os.getenv("TELEGRAM_PAYMENT_LINK_SECRET") or BOT_TOKEN or "tracex-default-secret"
+TELEGRAM_PAY_ROUTE = os.getenv("TELEGRAM_PAY_ROUTE", "telegram-pay")
 PAYMENT_SESSION_TTL_MINUTES = int(os.getenv("PAYMENT_SESSION_TTL_MINUTES", "10"))
 PAYMENT_SESSION_CLEANUP_DAYS = int(os.getenv("PAYMENT_SESSION_CLEANUP_DAYS", "1"))
 # Old redirect model disabled. Direct Cashfree is used.
@@ -825,6 +830,34 @@ def process_telegram_session_success(order_id, payment_id=None, raw_response=Non
         traceback.print_exc()
         return False
 
+def sign_telegram_payment_params(params):
+    """Create short HMAC signature for stateless Telegram payment URL."""
+    try:
+        clean = {str(k): str(v) for k, v in params.items() if k != "sig" and v is not None}
+        canonical = "&".join(f"{k}={clean[k]}" for k in sorted(clean.keys()))
+        return hmac.new(
+            TELEGRAM_PAYMENT_LINK_SECRET.encode("utf-8"),
+            canonical.encode("utf-8"),
+            hashlib.sha256
+        ).hexdigest()[:32]
+    except Exception as e:
+        print(f"Payment link signing error: {e}")
+        return ""
+
+
+def verify_telegram_payment_params(params):
+    """Optional local verifier for /pay compatibility route."""
+    try:
+        received = str(params.get("sig") or "")
+        expected = sign_telegram_payment_params(params)
+        if not received or not hmac.compare_digest(received, expected):
+            return False
+        exp = int(params.get("exp") or 0)
+        return exp > int(datetime.now(timezone.utc).timestamp())
+    except Exception:
+        return False
+
+
 def generate_payment_session_code():
     """Generate unique short session code for Telegram payment links."""
     return "TG" + uuid.uuid4().hex[:18].upper()
@@ -842,8 +875,11 @@ def cleanup_old_payment_sessions():
 
 def create_telegram_payment_session(plan_id, telegram_user_id, telegram_username, protected_number=None):
     """
-    Create a 10-minute temporary website payment session.
-    Bot does NOT call Cashfree. Existing website backend will open this session link and process payment.
+    Create a stateless signed website payment link.
+    IMPORTANT:
+    - No row is inserted into telegram_payment_sessions.
+    - Link itself carries tx/user/plan/amount/expiry/protected_number + HMAC signature.
+    - Website backend must verify signature and then create Cashfree order + update telegram_users after success.
     """
     try:
         plan = PLAN_CONFIG.get(plan_id)
@@ -855,51 +891,37 @@ def create_telegram_payment_session(plan_id, telegram_user_id, telegram_username
             print("protected_number is required for protect49")
             return None, None, None
 
-        cleanup_old_payment_sessions()
-
-        session_code = generate_payment_session_code()
+        tx_code = generate_payment_session_code().replace("TG", "TX", 1)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=PAYMENT_SESSION_TTL_MINUTES)
+        exp_unix = int(expires_at.timestamp())
+        safe_username = (telegram_username or "no_username").replace("@", "")[:60]
 
-        session_data = {
-            "session_id": session_code,
-            "telegram_user_id": telegram_user_id,
-            "telegram_username": telegram_username,
-            "plan_id": plan_id,
-            "amount": plan["amount"],
-            "credits": plan["credits"],
-            "unlimited_minutes": plan["unlimited_minutes"],
+        params = {
+            "source": "telegram_bot",
+            "tx": tx_code,
+            "tg_id": str(telegram_user_id),
+            "username": safe_username,
+            "plan": plan_id,
+            "amount": str(plan["amount"]),
+            "credits": str(plan["credits"]),
+            "unlimited_minutes": str(plan["unlimited_minutes"]),
             "payment_for": plan["payment_for"],
-            "protected_number": protected_number,
-            "status": "pending",
-            "expires_at": expires_at.isoformat(),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "exp": str(exp_unix),
         }
+        if protected_number:
+            params["protected_number"] = str(protected_number)
 
-        # Retry on extremely rare session_code collision.
-        for attempt in range(3):
-            try:
-                result = supabase.table("telegram_payment_sessions").insert(session_data).execute()
-                if result.data:
-                    break
-            except Exception as insert_error:
-                if "duplicate" in str(insert_error).lower() or "unique" in str(insert_error).lower():
-                    session_code = generate_payment_session_code()
-                    session_data["session_id"] = session_code
-                    continue
-                raise insert_error
-        else:
-            print("Failed to create unique payment session after retries")
-            return None, None, None
+        params["sig"] = sign_telegram_payment_params(params)
+        payment_url = f"{WEBSITE_PAYMENT_BASE_URL}/{TELEGRAM_PAY_ROUTE}?{urlencode(params)}"
 
-        # IMPORTANT: Payment must open on approved website domain, not Render.
-        # Website route /telegram-pay will use existing website Cashfree backend and update the same Supabase DB.
-        payment_url = f"{WEBSITE_PAYMENT_BASE_URL}/telegram-pay?session_id={session_code}"
-        print(f"✅ Telegram website payment session created: {session_code} user={telegram_user_id} plan={plan_id} url={payment_url} expires={expires_at.isoformat()}")
-        return session_code, payment_url, expires_at
+        print(
+            f"✅ Stateless Telegram payment link created: tx={tx_code} "
+            f"user={telegram_user_id} plan={plan_id} url={payment_url} expires={expires_at.isoformat()}"
+        )
+        return tx_code, payment_url, expires_at
 
     except Exception as e:
-        print(f"Create telegram payment session error: {e}")
+        print(f"Create stateless telegram payment link error: {e}")
         import traceback
         traceback.print_exc()
         return None, None, None
@@ -1669,61 +1691,77 @@ def show_credit_packs(message, user_id):
 """
     bot.send_message(message.chat.id, packs_msg, reply_markup=credit_packs_markup(), parse_mode='Markdown')
 
-def check_telegram_session_status(call, session_id):
-    """Button helper: verify latest Telegram payment status.
-    First checks Supabase status written by website. If still pending, it tries a Cashfree status fallback using any stored order id.
+def check_telegram_session_status(call, tx_code):
+    """Button helper for stateless website payment flow.
+    Website should write a successful row into payment_claims with session_id/tx = tx_code, then update telegram_users.
+    Fallback also checks old telegram_payment_sessions for compatibility.
     """
     try:
         user_id = call.from_user.id
-        resp = supabase.table("telegram_payment_sessions").select("*").eq("session_id", session_id).limit(1).execute()
-        if not resp.data:
-            bot.answer_callback_query(call.id, "Invalid payment session.", show_alert=True)
+        tx_code = str(tx_code).strip()
+
+        # 1) New stateless flow: website stores transaction in payment_claims.session_id or idempotency_key.
+        claim = None
+        for field in ["session_id", "idempotency_key", "cashfree_order_id"]:
+            try:
+                q = supabase.table("payment_claims").select("*").eq(field, tx_code).limit(1).execute()
+                if q.data:
+                    claim = q.data[0]
+                    break
+            except Exception as qerr:
+                print(f"payment_claims check warning field={field}: {qerr}")
+
+        if claim:
+            claim_user = claim.get("telegram_user_id")
+            if claim_user and int(claim_user) != int(user_id) and user_id != ADMIN_ID:
+                bot.answer_callback_query(call.id, "This payment is not yours.", show_alert=True)
+                return
+            status = normalize_status(claim.get("status"))
+            if status in SUCCESS_STATUSES:
+                user = get_user(user_id)
+                credits = user.get("credits", 0) if user else 0
+                unlimited_expiry = user.get("unlimited_expiry") if user else None
+                extra = f"\n🚀 Unlimited: `{str(unlimited_expiry)[:19]}`" if unlimited_expiry else ""
+                bot.answer_callback_query(call.id, "Payment verified ✅", show_alert=True)
+                bot.send_message(
+                    call.message.chat.id,
+                    f"✅ *Payment Verified!*\n\n💎 Account updated successfully.\n💰 Current Credits: `{credits}`{extra}\n\nUse /start to refresh.",
+                    parse_mode="Markdown",
+                    reply_markup=main_menu_markup(user_id)
+                )
+                return
+            bot.answer_callback_query(call.id, "Payment found but not success yet. Wait few seconds.", show_alert=True)
             return
 
-        session = resp.data[0]
-        if int(session.get("telegram_user_id") or 0) != int(user_id) and user_id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "This payment session is not yours.", show_alert=True)
-            return
+        # 2) Compatibility fallback: old telegram_payment_sessions table.
+        try:
+            resp = supabase.table("telegram_payment_sessions").select("*").eq("session_id", tx_code).limit(1).execute()
+        except Exception as old_e:
+            print(f"old telegram_payment_sessions check warning: {old_e}")
+            resp = None
 
-        status = normalize_status(session.get("status"))
+        if resp and resp.data:
+            session = resp.data[0]
+            if int(session.get("telegram_user_id") or 0) != int(user_id) and user_id != ADMIN_ID:
+                bot.answer_callback_query(call.id, "This payment session is not yours.", show_alert=True)
+                return
+            status = normalize_status(session.get("status"))
+            if status in SUCCESS_STATUSES:
+                user = get_user(user_id)
+                credits = user.get("credits", 0) if user else 0
+                bot.answer_callback_query(call.id, "Payment verified ✅", show_alert=True)
+                bot.send_message(
+                    call.message.chat.id,
+                    f"✅ *Payment Verified!*\n\n💎 Account updated successfully.\n💰 Current Credits: `{credits}`\n\nUse /start to refresh.",
+                    parse_mode="Markdown",
+                    reply_markup=main_menu_markup(user_id)
+                )
+                return
+            if status == "expired":
+                bot.answer_callback_query(call.id, "Session expired. Generate a new link.", show_alert=True)
+                return
 
-        # If website already fulfilled the order, just show verified.
-        if status not in SUCCESS_STATUSES:
-            # Fallback: website may have created Cashfree order but not yet updated session status.
-            order_id = get_session_order_id(session)
-            if order_id:
-                order_data = get_cashfree_order_status(order_id)
-                order_status = str((order_data or {}).get("order_status") or "").upper()
-                print(f"CHECKPAY fallback: session={session_id} order={order_id} cashfree_status={order_status}")
-                if order_status in ["PAID", "SUCCESS", "COMPLETED"]:
-                    payment_id = (order_data or {}).get("payment_id") or (order_data or {}).get("cf_payment_id")
-                    process_telegram_session_success(order_id, payment_id, order_data)
-                    status = "success"
-
-            # Refresh after possible fallback fulfillment.
-            resp2 = supabase.table("telegram_payment_sessions").select("*").eq("session_id", session_id).limit(1).execute()
-            if resp2.data:
-                session = resp2.data[0]
-                status = normalize_status(session.get("status"))
-
-        if status in SUCCESS_STATUSES:
-            user = get_user(user_id)
-            credits = user.get("credits", 0) if user else 0
-            unlimited_expiry = user.get("unlimited_expiry") if user else None
-            extra = ""
-            if unlimited_expiry:
-                extra = f"\n🚀 Unlimited: `{str(unlimited_expiry)[:19]}`"
-            bot.answer_callback_query(call.id, "Payment verified ✅", show_alert=True)
-            bot.send_message(
-                call.message.chat.id,
-                f"✅ *Payment Verified!*\n\n💎 Account updated successfully.\n💰 Current Credits: `{credits}`{extra}\n\nUse /start to refresh.",
-                parse_mode="Markdown",
-                reply_markup=main_menu_markup(user_id)
-            )
-        elif status == "expired":
-            bot.answer_callback_query(call.id, "Session expired. Generate a new link.", show_alert=True)
-        else:
-            bot.answer_callback_query(call.id, "Payment not confirmed yet. Try again after a few seconds.", show_alert=True)
+        bot.answer_callback_query(call.id, "Payment not confirmed yet. Try again after a few seconds.", show_alert=True)
     except Exception as e:
         print(f"Check payment status error: {e}")
         import traceback
