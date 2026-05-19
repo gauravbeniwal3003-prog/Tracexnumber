@@ -26,7 +26,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7850023357"))
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "-1003743686626"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@gaurav_beniwal_0001")
-BOT_VERSION = "5.1"
+BOT_VERSION = "5.2"
 
 # Lookup API Configuration
 LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/apibuy/public/lookup.php")
@@ -545,6 +545,59 @@ def get_cashfree_order_status(order_id):
         return None
 
 
+
+# Success states used by website + bot + fallback verification.
+SUCCESS_STATUSES = {"success", "paid", "completed", "complete", "payment_success", "captured"}
+
+
+def normalize_status(value):
+    return str(value or "pending").strip().lower()
+
+
+def get_session_order_id(session):
+    """Website/backend may store Cashfree order id in different columns."""
+    if not isinstance(session, dict):
+        return None
+    for key in [
+        "gateway_order_id",
+        "cashfree_order_id",
+        "order_id",
+        "cf_order_id",
+        "payment_order_id",
+    ]:
+        value = session.get(key)
+        if value:
+            return str(value)
+
+    raw = session.get("raw_response")
+    if isinstance(raw, dict):
+        for key in ["order_id", "cf_order_id", "cashfree_order_id"]:
+            value = raw.get(key)
+            if value:
+                return str(value)
+        data = raw.get("data")
+        if isinstance(data, dict):
+            for key in ["order_id", "cf_order_id", "cashfree_order_id"]:
+                value = data.get(key)
+                if value:
+                    return str(value)
+    return None
+
+
+def get_session_by_order_id(order_id):
+    """Find Telegram payment session by any known order id column."""
+    if not order_id:
+        return None
+    for column in ["gateway_order_id", "cashfree_order_id", "order_id", "cf_order_id", "payment_order_id"]:
+        try:
+            resp = supabase.table("telegram_payment_sessions").select("*").eq(column, order_id).limit(1).execute()
+            if resp.data:
+                return resp.data[0]
+        except Exception as e:
+            # Some columns may not exist in user's table; safely skip them.
+            print(f"Session lookup skipped column {column}: {e}")
+    return None
+
 def cashfree_api_base():
     env_upper = CASHFREE_ENV.upper()
     if env_upper in ["PROD", "PRODUCTION", "LIVE"]:
@@ -671,16 +724,19 @@ def create_cashfree_order_for_session(session):
         return None, None
 
 def process_telegram_session_success(order_id, payment_id=None, raw_response=None):
-    """Add credits/unlimited/protection for telegram_payment_sessions once payment is PAID."""
+    """Add credits/unlimited/protection for telegram_payment_sessions once payment is PAID.
+    Works even if website stored order id as cashfree_order_id instead of gateway_order_id.
+    """
     try:
-        resp = supabase.table("telegram_payment_sessions").select("*").eq("gateway_order_id", order_id).limit(1).execute()
-        if not resp.data:
+        session = get_session_by_order_id(order_id)
+        if not session:
             print(f"No telegram payment session found for order {order_id}")
             return False
 
-        session = resp.data[0]
-        if session.get("status") == "success":
-            print(f"Telegram session already processed for order {order_id}")
+        session_id = session.get("session_id")
+        current_status = normalize_status(session.get("status"))
+        if current_status in SUCCESS_STATUSES:
+            print(f"Telegram session already processed for order {order_id} / session {session_id}")
             return True
 
         telegram_user_id = session.get("telegram_user_id")
@@ -690,13 +746,20 @@ def process_telegram_session_success(order_id, payment_id=None, raw_response=Non
         unlimited_minutes = int(session.get("unlimited_minutes") or 0)
         protected_number = session.get("protected_number")
 
+        if not telegram_user_id:
+            print(f"Session {session_id} has no telegram_user_id")
+            return False
+
         if payment_for == "credits" and credits > 0:
             new_total = add_credits(telegram_user_id, credits)
-            bot.send_message(
-                telegram_user_id,
-                f"✅ *Payment Success!*\n\n💎 `{credits}` credits added.\n📊 Total: `{new_total}`\n\nUse /start to continue.",
-                parse_mode="Markdown"
-            )
+            try:
+                bot.send_message(
+                    telegram_user_id,
+                    f"✅ *Payment Success!*\n\n💎 `{credits}` credits added.\n📊 Total: `{new_total}`\n\nUse /start to continue.",
+                    parse_mode="Markdown"
+                )
+            except Exception as msg_e:
+                print(f"User success message failed: {msg_e}")
 
         elif payment_for == "unlimited" and unlimited_minutes > 0:
             user = get_user(telegram_user_id)
@@ -715,32 +778,41 @@ def process_telegram_session_success(order_id, payment_id=None, raw_response=Non
                 "unlimited_expiry": new_expiry.isoformat(),
                 "updated_at": now.isoformat()
             }).eq("telegram_user_id", telegram_user_id).execute()
-            bot.send_message(
-                telegram_user_id,
-                f"✅ *Payment Success!*\n\n🚀 Unlimited plan activated.\n⏰ Expires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`\n\nUse /start to continue.",
-                parse_mode="Markdown"
-            )
+            try:
+                bot.send_message(
+                    telegram_user_id,
+                    f"✅ *Payment Success!*\n\n🚀 Unlimited plan activated.\n⏰ Expires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`\n\nUse /start to continue.",
+                    parse_mode="Markdown"
+                )
+            except Exception as msg_e:
+                print(f"User success message failed: {msg_e}")
 
         elif payment_for == "protect_number" and protected_number:
             if not is_number_protected(protected_number):
                 add_protected_number(protected_number, telegram_user_id)
-            bot.send_message(
-                telegram_user_id,
-                f"✅ *Payment Success!*\n\n🛡️ Number protected: `{protected_number}`\n\nUse /start to continue.",
-                parse_mode="Markdown"
-            )
+            try:
+                bot.send_message(
+                    telegram_user_id,
+                    f"✅ *Payment Success!*\n\n🛡️ Number protected: `{protected_number}`\n\nUse /start to continue.",
+                    parse_mode="Markdown"
+                )
+            except Exception as msg_e:
+                print(f"User success message failed: {msg_e}")
 
-        supabase.table("telegram_payment_sessions").update({
+        update_payload = {
             "status": "success",
             "payment_id": payment_id,
-            "raw_response": raw_response or {},
             "updated_at": datetime.now(timezone.utc).isoformat()
-        }).eq("gateway_order_id", order_id).execute()
+        }
+        if raw_response is not None:
+            update_payload["raw_response"] = raw_response
+        # Update by session_id so it works regardless of order id column names.
+        supabase.table("telegram_payment_sessions").update(update_payload).eq("session_id", session_id).execute()
 
         try:
             bot.send_message(
                 ADMIN_CHANNEL_ID,
-                f"✅ *TELEGRAM PAYMENT SUCCESS*\n━━━━━━━━━━━━━━━━\n👤 User: `{telegram_user_id}`\n📦 Plan: `{plan_id}`\n💰 Amount: ₹{session.get('amount')}\n🆔 Order: `{order_id}`",
+                f"✅ *TELEGRAM PAYMENT SUCCESS*\n━━━━━━━━━━━━━━━━\n👤 User: `{telegram_user_id}`\n📦 Plan: `{plan_id}`\n💰 Amount: ₹{session.get('amount')}\n🆔 Session: `{session_id}`\n🧾 Order: `{order_id}`",
                 parse_mode="Markdown"
             )
         except Exception as log_e:
@@ -1453,10 +1525,10 @@ def verify_telegram_payment(session_id):
         credits = int(session.get("credits") or 0)
         unlimited_minutes = int(session.get("unlimited_minutes") or 0)
 
-        if status == "success":
+        if status in SUCCESS_STATUSES:
             return jsonify({
                 "success": True,
-                "status": "success",
+                "status": status,
                 "message": "Payment already verified",
                 "credits_added": credits,
                 "plan_id": plan_id,
@@ -1476,7 +1548,7 @@ def verify_telegram_payment(session_id):
             except Exception as exp_e:
                 print(f"Verify expiry parse warning: {exp_e}")
 
-        order_id = session.get("gateway_order_id")
+        order_id = get_session_order_id(session)
         if not order_id:
             return jsonify({"success": False, "status": status, "message": "Payment order not created yet"}), 200
 
@@ -1520,9 +1592,9 @@ def payment_success():
 
     if session_id and not order_id:
         try:
-            resp = supabase.table("telegram_payment_sessions").select("gateway_order_id").eq("session_id", session_id).limit(1).execute()
+            resp = supabase.table("telegram_payment_sessions").select("*").eq("session_id", session_id).limit(1).execute()
             if resp.data:
-                order_id = resp.data[0].get("gateway_order_id") or ""
+                order_id = get_session_order_id(resp.data[0]) or ""
         except Exception as e:
             print(f"payment_success session lookup warning: {e}")
     
@@ -1598,25 +1670,53 @@ def show_credit_packs(message, user_id):
     bot.send_message(message.chat.id, packs_msg, reply_markup=credit_packs_markup(), parse_mode='Markdown')
 
 def check_telegram_session_status(call, session_id):
-    """Button helper: user can check if website payment has updated Supabase session."""
+    """Button helper: verify latest Telegram payment status.
+    First checks Supabase status written by website. If still pending, it tries a Cashfree status fallback using any stored order id.
+    """
     try:
         user_id = call.from_user.id
         resp = supabase.table("telegram_payment_sessions").select("*").eq("session_id", session_id).limit(1).execute()
         if not resp.data:
             bot.answer_callback_query(call.id, "Invalid payment session.", show_alert=True)
             return
+
         session = resp.data[0]
         if int(session.get("telegram_user_id") or 0) != int(user_id) and user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "This payment session is not yours.", show_alert=True)
             return
-        status = str(session.get("status") or "pending").lower()
-        if status in ["success", "paid", "completed"]:
+
+        status = normalize_status(session.get("status"))
+
+        # If website already fulfilled the order, just show verified.
+        if status not in SUCCESS_STATUSES:
+            # Fallback: website may have created Cashfree order but not yet updated session status.
+            order_id = get_session_order_id(session)
+            if order_id:
+                order_data = get_cashfree_order_status(order_id)
+                order_status = str((order_data or {}).get("order_status") or "").upper()
+                print(f"CHECKPAY fallback: session={session_id} order={order_id} cashfree_status={order_status}")
+                if order_status in ["PAID", "SUCCESS", "COMPLETED"]:
+                    payment_id = (order_data or {}).get("payment_id") or (order_data or {}).get("cf_payment_id")
+                    process_telegram_session_success(order_id, payment_id, order_data)
+                    status = "success"
+
+            # Refresh after possible fallback fulfillment.
+            resp2 = supabase.table("telegram_payment_sessions").select("*").eq("session_id", session_id).limit(1).execute()
+            if resp2.data:
+                session = resp2.data[0]
+                status = normalize_status(session.get("status"))
+
+        if status in SUCCESS_STATUSES:
             user = get_user(user_id)
             credits = user.get("credits", 0) if user else 0
+            unlimited_expiry = user.get("unlimited_expiry") if user else None
+            extra = ""
+            if unlimited_expiry:
+                extra = f"\n🚀 Unlimited: `{str(unlimited_expiry)[:19]}`"
             bot.answer_callback_query(call.id, "Payment verified ✅", show_alert=True)
             bot.send_message(
                 call.message.chat.id,
-                f"✅ *Payment Verified!*\n\n💎 Your account has been updated.\n💰 Current Credits: `{credits}`\n\nUse /start to refresh.",
+                f"✅ *Payment Verified!*\n\n💎 Account updated successfully.\n💰 Current Credits: `{credits}`{extra}\n\nUse /start to refresh.",
                 parse_mode="Markdown",
                 reply_markup=main_menu_markup(user_id)
             )
@@ -1626,6 +1726,8 @@ def check_telegram_session_status(call, session_id):
             bot.answer_callback_query(call.id, "Payment not confirmed yet. Try again after a few seconds.", show_alert=True)
     except Exception as e:
         print(f"Check payment status error: {e}")
+        import traceback
+        traceback.print_exc()
         bot.answer_callback_query(call.id, "Unable to check payment right now.", show_alert=True)
 
 def handle_plan_selection(call):
