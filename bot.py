@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Cashfree
-Version: 4.2 - Production Ready with Secure Webhook
+Version: 5.5.1 - Manual Static QR Payment Flow
 """
 
 import telebot
@@ -26,7 +26,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7850023357"))
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "-1003743686626"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@gaurav_beniwal_0001")
-BOT_VERSION = "4.2"
+BOT_VERSION = "5.5.1"
 
 # Lookup API Configuration
 LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/apibuy/public/lookup.php")
@@ -37,6 +37,19 @@ COOLDOWN_SECONDS = 3
 AUTO_DELETE_SECONDS = 120
 GROUP_LINK = os.getenv("GROUP_LINK", "https://t.me/Gaurav_beni_0001")
 PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
+
+# Manual QR Plan Configuration
+PLAN_CONFIG = {
+    "c10": {"amount": 20, "credits": 10, "unlimited_minutes": 0, "payment_for": "credits", "label": "10 Credits"},
+    "c50": {"amount": 70, "credits": 50, "unlimited_minutes": 0, "payment_for": "credits", "label": "50 Credits"},
+    "c100": {"amount": 100, "credits": 100, "unlimited_minutes": 0, "payment_for": "credits", "label": "100 Credits"},
+    "u1h": {"amount": 9, "credits": 0, "unlimited_minutes": 60, "payment_for": "unlimited", "label": "1 Hour Unlimited"},
+    "u1d": {"amount": 29, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited"},
+    "u1w": {"amount": 149, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited"},
+    "u1m": {"amount": 399, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited"},
+    "protect49": {"amount": 49, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Protect Number"},
+}
+
 
 # Supabase Configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL")
