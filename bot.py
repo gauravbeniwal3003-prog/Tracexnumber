@@ -18,7 +18,7 @@ import uuid
 import hmac
 import hashlib
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
 from supabase import create_client, Client
 
 # ==================== CONFIGURATION ====================
@@ -35,7 +35,10 @@ LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number")
 
 COOLDOWN_SECONDS = 3
 AUTO_DELETE_SECONDS = 120
-GROUP_LINK = os.getenv("GROUP_LINK", "https://t.me/Gaurav_beni_0001")
+GROUP_LINK = os.getenv("GROUP_LINK", "https://t.me/Gaurav_beni_0001").strip() or "https://t.me/Gaurav_beni_0001"
+# Force correct public channel URL for all Join Community / Join Group buttons.
+if not GROUP_LINK.startswith("https://t.me/"):
+    GROUP_LINK = "https://t.me/Gaurav_beni_0001"
 
 # Website Payment Session Configuration
 # Your existing website/backend will open and verify this session link.
@@ -538,6 +541,219 @@ def get_cashfree_order_status(order_id):
     except Exception as e:
         print(f"Get order status error: {e}")
         return None
+
+
+def get_cashfree_api_base():
+    """Return Cashfree PG base URL based on CASHFREE_ENV."""
+    env_upper = str(CASHFREE_ENV or "TEST").upper()
+    if env_upper in ["PROD", "PRODUCTION", "LIVE"]:
+        return "https://api.cashfree.com/pg"
+    return "https://sandbox.cashfree.com/pg"
+
+def cashfree_headers():
+    return {
+        "x-client-id": CASHFREE_APP_ID or "",
+        "x-client-secret": CASHFREE_SECRET_KEY or "",
+        "x-api-version": CASHFREE_API_VERSION,
+        "Content-Type": "application/json"
+    }
+
+def get_cashfree_payment_link_status(link_id):
+    """Fetch Cashfree payment link details. Used if link already exists or webhook needs verification."""
+    try:
+        if not CASHFREE_APP_ID or not CASHFREE_SECRET_KEY:
+            print("Cashfree credentials missing for link status")
+            return None
+        api_base = get_cashfree_api_base()
+        response = requests.get(f"{api_base}/links/{link_id}", headers=cashfree_headers(), timeout=30)
+        print("Cashfree Link Status Code:", response.status_code)
+        print("Cashfree Link Status Body:", response.text[:1200])
+        if response.status_code in [200, 201]:
+            return response.json()
+        return None
+    except Exception as e:
+        print(f"Get Cashfree payment link status error: {e}")
+        return None
+
+def create_cashfree_payment_link_for_session(session):
+    """
+    Production payment creator for Render /pay/<session_id>.
+    Creates a real Cashfree Payment Link and returns link_url.
+    """
+    try:
+        if not CASHFREE_APP_ID or not CASHFREE_SECRET_KEY:
+            print("❌ Cashfree credentials missing. Set CASHFREE_APP_ID and CASHFREE_SECRET_KEY.")
+            return None
+
+        session_id = session.get("session_id")
+        amount = float(session.get("amount") or 0)
+        plan_id = session.get("plan_id")
+        telegram_user_id = session.get("telegram_user_id")
+        username = session.get("telegram_username") or str(telegram_user_id)
+
+        if not session_id or amount <= 0:
+            print(f"Invalid session for Cashfree link: {session}")
+            return None
+
+        api_base = get_cashfree_api_base()
+        render_base = (RENDER_BASE_URL or TELEGRAM_PAYMENT_BASE_URL or "https://tracexnumber-bot.onrender.com").rstrip("/")
+
+        payload = {
+            "link_id": session_id,
+            "link_amount": amount,
+            "link_currency": "INR",
+            "link_purpose": f"TraceX {plan_id} for Telegram user {telegram_user_id}",
+            "customer_details": {
+                "customer_name": str(username)[:100],
+                "customer_email": f"tg{telegram_user_id}@tracex.local",
+                "customer_phone": "9999999999"
+            },
+            "link_meta": {
+                "return_url": f"{render_base}/payment/success?session_id={session_id}",
+                "notify_url": f"{render_base}/cashfree/webhook"
+            },
+            "link_notify": {
+                "send_sms": False,
+                "send_email": False
+            }
+        }
+
+        print("Calling Cashfree Payment Link API")
+        print("Cashfree Environment:", CASHFREE_ENV)
+        print("Cashfree Payload:", json.dumps({**payload, "customer_details": {"customer_name": payload["customer_details"]["customer_name"], "customer_email": payload["customer_details"]["customer_email"], "customer_phone": "hidden"}}, ensure_ascii=False)[:1200])
+
+        response = requests.post(f"{api_base}/links", headers=cashfree_headers(), json=payload, timeout=30)
+        print("Cashfree Response Status:", response.status_code)
+        print("Cashfree Response Body:", response.text[:2000])
+
+        if response.status_code in [200, 201]:
+            data = response.json()
+            link_url = data.get("link_url") or data.get("payment_link") or data.get("url")
+            if link_url:
+                try:
+                    supabase.table("telegram_payment_sessions").update({
+                        "gateway_order_id": session_id,
+                        "raw_response": data,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("session_id", session_id).execute()
+                except Exception as e:
+                    print(f"Session payment-link update warning: {e}")
+                return link_url
+            print("Cashfree success response did not contain link_url")
+            return None
+
+        # If link already exists, fetch it and reuse.
+        if response.status_code in [400, 409] and ("already" in response.text.lower() or "duplicate" in response.text.lower()):
+            existing = get_cashfree_payment_link_status(session_id)
+            if existing:
+                return existing.get("link_url") or existing.get("payment_link") or existing.get("url")
+
+        return None
+    except Exception as e:
+        print(f"Create Cashfree payment link for session error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def process_telegram_session_success(session_id, payment_id=None, raw_response=None):
+    """Mark Telegram payment session success and add credits/unlimited/protection exactly once."""
+    try:
+        resp = supabase.table("telegram_payment_sessions").select("*").eq("session_id", session_id).limit(1).execute()
+        if not resp.data:
+            print(f"Telegram payment session not found: {session_id}")
+            return False
+
+        session = resp.data[0]
+        if session.get("status") == "success":
+            print(f"Telegram session {session_id} already processed")
+            return True
+
+        telegram_user_id = session.get("telegram_user_id")
+        plan_id = session.get("plan_id")
+        payment_for = session.get("payment_for")
+        credits = int(session.get("credits") or 0)
+        unlimited_minutes = int(session.get("unlimited_minutes") or 0)
+        protected_number = session.get("protected_number")
+
+        # Mark processing first to reduce duplicate processing.
+        supabase.table("telegram_payment_sessions").update({
+            "status": "processing",
+            "payment_id": payment_id,
+            "raw_response": raw_response or {},
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("session_id", session_id).execute()
+
+        if payment_for == "credits" and credits > 0:
+            new_total = add_credits(telegram_user_id, credits)
+            try:
+                bot.send_message(
+                    int(telegram_user_id),
+                    f"✅ *Payment Success!*\n\n💎 `{credits}` credits added.\n📊 Total: `{new_total}`\n\nUse /start to continue.",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                print(f"User success message failed: {e}")
+
+        elif payment_for == "unlimited" and unlimited_minutes > 0:
+            user = get_user(telegram_user_id)
+            now = datetime.now(timezone.utc)
+            current_expiry = user.get("unlimited_expiry") if user else None
+            base_time = now
+            if current_expiry:
+                try:
+                    expiry_date = datetime.fromisoformat(str(current_expiry).replace("Z", "+00:00"))
+                    if expiry_date > now:
+                        base_time = expiry_date
+                except Exception:
+                    pass
+            new_expiry = base_time + timedelta(minutes=unlimited_minutes)
+            supabase.table("telegram_users").update({
+                "unlimited_expiry": new_expiry.isoformat(),
+                "updated_at": now.isoformat()
+            }).eq("telegram_user_id", telegram_user_id).execute()
+            try:
+                bot.send_message(
+                    int(telegram_user_id),
+                    f"✅ *Payment Success!*\n\n🚀 Unlimited activated.\n⏰ Expires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')}`\n\nUse /start to continue.",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                print(f"User unlimited message failed: {e}")
+
+        elif payment_for == "protect_number" and protected_number:
+            add_protected_number(protected_number, telegram_user_id)
+            try:
+                bot.send_message(
+                    int(telegram_user_id),
+                    f"✅ *Payment Success!*\n\n🛡️ Number protected:\n`{protected_number}`\n\nUse /start to continue.",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                print(f"User protection message failed: {e}")
+
+        supabase.table("telegram_payment_sessions").update({
+            "status": "success",
+            "payment_id": payment_id,
+            "raw_response": raw_response or {},
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("session_id", session_id).execute()
+
+        try:
+            bot.send_message(
+                ADMIN_CHANNEL_ID,
+                f"✅ *TELEGRAM PAYMENT SUCCESS*\n━━━━━━━━━━━━━━━━\n👤 User: `{telegram_user_id}`\n📦 Plan: `{plan_id}`\n💰 Amount: ₹{session.get('amount')}\n🆔 Session: `{session_id}`",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Admin success log failed: {e}")
+
+        return True
+    except Exception as e:
+        print(f"Process telegram session success error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 
 def generate_payment_session_code():
     """Generate unique short session code for Telegram payment links."""
@@ -1146,9 +1362,25 @@ def cashfree_webhook():
                 if isinstance(nested.get('payment'), dict) and not payment_id:
                     payment_id = nested['payment'].get('cf_payment_id') or nested['payment'].get('payment_id')
 
+        # Cashfree Payment Links may send link_id instead of order_id.
+        link_id = None
+        if isinstance(data, dict):
+            link_id = data.get("link_id")
+            if isinstance(data.get("link"), dict) and not link_id:
+                link_id = data["link"].get("link_id")
+            nested = data.get("data")
+            if isinstance(nested, dict):
+                if not link_id:
+                    link_id = nested.get("link_id")
+                if isinstance(nested.get("link"), dict) and not link_id:
+                    link_id = nested["link"].get("link_id")
+
+        if not order_id and link_id:
+            order_id = link_id
+
         if not order_id:
-            print("Could not extract order_id from webhook data")
-            return jsonify({"error": "No order_id found"}), 400
+            print("Could not extract order_id/link_id from webhook data")
+            return jsonify({"error": "No order_id/link_id found"}), 400
 
         # Signature verification is attempted, but final trust is based on Cashfree Order Status API.
         if CASHFREE_WEBHOOK_SECRET:
@@ -1159,7 +1391,48 @@ def cashfree_webhook():
         else:
             print("⚠️ CASHFREE_WEBHOOK_SECRET not set. Using Order Status API verification only.")
 
-        # Idempotency early check.
+        # First check if this is our Telegram payment session flow.
+        try:
+            sess_check = supabase.table("telegram_payment_sessions").select("status").eq("session_id", order_id).limit(1).execute()
+            if sess_check.data:
+                if sess_check.data[0].get("status") == "success":
+                    print(f"Telegram payment session {order_id} already success")
+                    return jsonify({"status": "already_processed"}), 200
+
+                link_data = get_cashfree_payment_link_status(order_id)
+                if not link_data:
+                    print(f"Could not verify Cashfree payment link {order_id}")
+                    return jsonify({"error": "Link verification failed"}), 400
+
+                link_status = str(
+                    link_data.get("link_status")
+                    or link_data.get("status")
+                    or link_data.get("payment_status")
+                    or ""
+                ).upper()
+                print(f"Cashfree verified link status for {order_id}: {link_status}")
+
+                # Cashfree payment link success statuses can vary by API/version.
+                raw_text = json.dumps(link_data, ensure_ascii=False).upper()
+                success_detected = (
+                    link_status in ["PAID", "SUCCESS", "COMPLETED", "PAID_LINK"]
+                    or '"PAID"' in raw_text
+                    or '"SUCCESS"' in raw_text
+                )
+
+                if success_detected:
+                    process_telegram_session_success(
+                        order_id,
+                        payment_id or link_data.get("cf_payment_id") or link_data.get("payment_id"),
+                        link_data
+                    )
+                else:
+                    print(f"Payment link {order_id} not paid yet. Status={link_status}")
+                return jsonify({"status": "ok"}), 200
+        except Exception as e:
+            print(f"Telegram session webhook check error: {e}")
+
+        # Legacy payment_claims flow fallback.
         try:
             claim_check = supabase.table("payment_claims").select("status").eq("cashfree_order_id", order_id).limit(1).execute()
             if claim_check.data and claim_check.data[0].get("status") == "success":
@@ -1168,7 +1441,7 @@ def cashfree_webhook():
         except Exception as e:
             print(f"Payment claim precheck error: {e}")
 
-        # Final verification from Cashfree API.
+        # Final verification from Cashfree API for legacy order flow.
         order_data = get_cashfree_order_status(order_id)
         if not order_data:
             print(f"Could not verify order {order_id} status via Cashfree API")
@@ -1191,7 +1464,11 @@ def cashfree_webhook():
 
 @app.route('/pay/<session_id>', methods=['GET'])
 def telegram_payment_session_page(session_id):
-    """Render-hosted payment-session page. Visible link stays on tracexnumber-bot.onrender.com."""
+    """
+    Production Render payment route.
+    Visible URL stays: https://tracexnumber-bot.onrender.com/pay/<session_id>
+    It validates session, then redirects to existing checkout backend OR creates Cashfree Payment Link directly.
+    """
     try:
         response = supabase.table("telegram_payment_sessions").select("*").eq("session_id", session_id).limit(1).execute()
         if not response.data:
@@ -1200,22 +1477,36 @@ def telegram_payment_session_page(session_id):
             <h2>❌ Invalid Payment Link</h2><p>This payment session does not exist.</p>
             </body></html>
             """, 404
+
         session = response.data[0]
         status = session.get("status", "pending")
         expires_raw = session.get("expires_at")
+
         expired = False
         if expires_raw:
             expires_at = datetime.fromisoformat(str(expires_raw).replace('Z', '+00:00'))
             expired = expires_at <= datetime.now(timezone.utc)
-        if status != "pending":
-            return f"""
+
+        if status == "success":
+            return """
             <html><body style="font-family:Arial;text-align:center;padding:40px;background:#0b0f17;color:white;">
-            <h2>✅ Session Status: {status}</h2><p>You can return to Telegram.</p>
+            <h2>✅ Payment Already Completed</h2><p>Credits/plan already added. Return to Telegram.</p>
             </body></html>
             """
+
+        if status not in ["pending", "created"]:
+            return f"""
+            <html><body style="font-family:Arial;text-align:center;padding:40px;background:#0b0f17;color:white;">
+            <h2>ℹ️ Session Status: {status}</h2><p>Please return to Telegram.</p>
+            </body></html>
+            """
+
         if expired:
             try:
-                supabase.table("telegram_payment_sessions").update({"status":"expired","updated_at":datetime.now(timezone.utc).isoformat()}).eq("session_id", session_id).execute()
+                supabase.table("telegram_payment_sessions").update({
+                    "status": "expired",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("session_id", session_id).execute()
             except Exception:
                 pass
             return """
@@ -1223,33 +1514,35 @@ def telegram_payment_session_page(session_id):
             <h2>⏰ Payment Link Expired</h2><p>Please generate a fresh link from Telegram bot.</p>
             </body></html>
             """, 410
+
+        # Option 1: Redirect to your existing private checkout backend if env is set.
         checkout_base = TELEGRAM_PAYMENT_CHECKOUT_BASE_URL.strip()
         if checkout_base:
             if "{session_id}" in checkout_base:
                 checkout_url = checkout_base.replace("{session_id}", session_id)
             else:
                 checkout_url = checkout_base.rstrip('/') + '/' + session_id
-            return f"""
-            <html><head><meta name="viewport" content="width=device-width, initial-scale=1.0" />
-            <meta http-equiv="refresh" content="1;url={checkout_url}"></head>
-            <body style="font-family:Arial;text-align:center;padding:40px;background:#0b0f17;color:white;">
-            <h2>💳 Redirecting to secure payment...</h2>
-            <p>Session: <b>{session_id}</b></p>
-            <a style="color:#60a5fa" href="{checkout_url}">Click here if not redirected</a>
-            </body></html>
-            """
-        return f"""
+            return redirect(checkout_url)
+
+        # Option 2: Production direct Cashfree Payment Link from this Render backend.
+        payment_url = create_cashfree_payment_link_for_session(session)
+        if payment_url:
+            return redirect(payment_url)
+
+        return """
         <html><body style="font-family:Arial;text-align:center;padding:40px;background:#0b0f17;color:white;">
-        <h2>💳 TraceX Payment Session Ready</h2>
-        <p><b>Session:</b> {session_id}</p>
-        <p><b>Plan:</b> {session.get('plan_id')}</p>
-        <p><b>Amount:</b> ₹{session.get('amount')}</p>
-        <p style="color:#fbbf24">Checkout backend route is not connected yet.</p>
+        <h2>❌ Payment Gateway Error</h2>
+        <p>Could not create payment link right now.</p>
+        <p>Please return to Telegram and try again.</p>
         </body></html>
-        """
+        """, 500
+
     except Exception as e:
         print(f"/pay session page error: {e}")
+        import traceback
+        traceback.print_exc()
         return "Payment page error. Please try again.", 500
+
 
 @app.route('/payment/success', methods=['GET'])
 def payment_success():
@@ -1291,7 +1584,7 @@ def payment_success():
 def keep_alive():
     """Run Flask app in a separate thread"""
     def run():
-        app.run(host='0.0.0.0', port=8080)
+        app.run(host='0.0.0.0', port=int(os.getenv('PORT', '8080')))
     t = threading.Thread(target=run)
     t.daemon = True
     t.start()
