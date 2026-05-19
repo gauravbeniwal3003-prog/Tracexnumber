@@ -39,7 +39,7 @@ GROUP_LINK = os.getenv("GROUP_LINK", "https://t.me/Gaurav_beni_0001")
 
 # Website Payment Session Configuration
 # Your existing website/backend will open and verify this session link.
-TELEGRAM_PAYMENT_BASE_URL = os.getenv("TELEGRAM_PAYMENT_BASE_URL", "https://tracexnumber-bot.onrender.com")
+TELEGRAM_PAYMENT_BASE_URL = os.getenv("PAYMENT_BASE_URL") or os.getenv("TELEGRAM_PAYMENT_BASE_URL", "https://tracexnumber-bot.onrender.com")
 PAYMENT_SESSION_TTL_MINUTES = int(os.getenv("PAYMENT_SESSION_TTL_MINUTES", "10"))
 PAYMENT_SESSION_CLEANUP_DAYS = int(os.getenv("PAYMENT_SESSION_CLEANUP_DAYS", "1"))
 # Optional forwarding target for your existing private checkout backend.
@@ -71,7 +71,7 @@ RENDER_BASE_URL = os.getenv("RENDER_BASE_URL", "https://your-app.onrender.com")
 
 # Cashfree API URLs - will be set dynamically
 CASHFREE_API_BASE = None
-CASHFREE_API_VERSION = "2023-08-01"
+CASHFREE_API_VERSION = os.getenv("CASHFREE_API_VERSION", "2023-08-01")
 
 # Initialize Bot
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -522,10 +522,11 @@ def get_cashfree_order_status(order_id):
             api_base = "https://sandbox.cashfree.com/pg"
         
         headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION,
-            "Content-Type": "application/json"
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-client-id": CASHFREE_APP_ID.strip() if CASHFREE_APP_ID else "",
+            "x-client-secret": CASHFREE_SECRET_KEY.strip() if CASHFREE_SECRET_KEY else "",
+            "x-api-version": CASHFREE_API_VERSION
         }
         
         response = requests.get(f"{api_base}/orders/{order_id}", headers=headers, timeout=30)
@@ -548,95 +549,118 @@ def cashfree_api_base():
 
 
 def create_cashfree_order_for_session(session):
-    """Create or reuse a Cashfree order for a Telegram payment session and return payment_session_id."""
+    """Create or reuse a Cashfree PG order for a Telegram payment session and return payment_session_id."""
     try:
         if not CASHFREE_APP_ID or not CASHFREE_SECRET_KEY:
-            print("❌ Cashfree credentials missing")
+            print("❌ Cashfree credentials missing: set CASHFREE_APP_ID and CASHFREE_SECRET_KEY")
+            return None, None
+
+        session_id = str(session.get("session_id") or "").strip()
+        if not session_id:
+            print("❌ session_id missing in telegram_payment_sessions row")
             return None, None
 
         existing_order_id = session.get("gateway_order_id")
         if existing_order_id:
+            print(f"♻️ Reusing existing Cashfree order: {existing_order_id}")
             order_data = get_cashfree_order_status(existing_order_id)
             if order_data:
                 psid = order_data.get("payment_session_id")
                 if psid:
                     return existing_order_id, psid
+                print("Existing order has no payment_session_id, creating fresh order")
 
         api_base, _mode = cashfree_api_base()
-        session_id = session.get("session_id")
-        order_id = f"TG_{session_id}"
+        order_id = f"TG{session_id}"[:45]  # safe length for Cashfree
         amount = float(session.get("amount") or 0)
-        telegram_user_id = str(session.get("telegram_user_id"))
-        username = session.get("telegram_username") or "telegram_user"
+        telegram_user_id = str(session.get("telegram_user_id") or "0")
+        username = str(session.get("telegram_username") or "Telegram User")[:80]
+
+        if amount <= 0:
+            print(f"❌ Invalid amount for session {session_id}: {amount}")
+            return None, None
 
         base_url = TELEGRAM_PAYMENT_BASE_URL.rstrip("/")
         return_url = f"{base_url}/payment/success?order_id={{order_id}}"
         notify_url = f"{base_url}/cashfree/webhook"
 
+        # Cashfree PG Orders API payload. Keep it minimal and valid for PROD.
         payload = {
             "order_id": order_id,
             "order_amount": amount,
             "order_currency": "INR",
             "customer_details": {
-                "customer_id": telegram_user_id,
+                "customer_id": f"tg_{telegram_user_id}",
                 "customer_name": username,
                 "customer_email": f"tg{telegram_user_id}@tracex.local",
-                "customer_phone": "9999999999"
+                "customer_phone": os.getenv("CASHFREE_DEFAULT_PHONE", "9999999999")
             },
             "order_meta": {
                 "return_url": return_url,
                 "notify_url": notify_url
             },
-            "order_note": f"TraceX Telegram {session.get('plan_id')} {session_id}",
-            "order_expiry_time": session.get("expires_at")
+            "order_note": f"TraceX Telegram {session.get('plan_id')} {session_id}"
         }
 
         headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION,
-            "Content-Type": "application/json",
-            "x-idempotency-key": session_id
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-client-id": CASHFREE_APP_ID.strip(),
+            "x-client-secret": CASHFREE_SECRET_KEY.strip(),
+            "x-api-version": CASHFREE_API_VERSION
         }
 
         print("🔥 Calling Cashfree Create Order")
+        print("Cashfree Env:", CASHFREE_ENV)
         print("Cashfree API Base:", api_base)
+        print("Cashfree API Version:", CASHFREE_API_VERSION)
         print("Cashfree Payload:", json.dumps(payload, ensure_ascii=False))
+
         response = requests.post(f"{api_base}/orders", headers=headers, json=payload, timeout=30)
         print("Cashfree Response Status:", response.status_code)
-        print("Cashfree Response Body:", response.text[:3000])
+        print("Cashfree Response Body:", response.text[:5000])
+
+        try:
+            resp_json = response.json()
+        except Exception:
+            resp_json = {"raw_text": response.text[:5000]}
 
         if response.status_code not in [200, 201]:
             try:
                 supabase.table("telegram_payment_sessions").update({
-                    "status": "pending",
-                    "raw_response": {"cashfree_error": response.text[:3000], "status_code": response.status_code},
+                    "raw_response": {"cashfree_error": resp_json, "status_code": response.status_code},
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }).eq("session_id", session_id).execute()
             except Exception as db_e:
                 print("Cashfree error save failed:", db_e)
             return None, None
 
-        data = response.json()
-        payment_session_id = data.get("payment_session_id")
+        payment_session_id = resp_json.get("payment_session_id")
         if not payment_session_id:
             print("❌ payment_session_id missing in Cashfree response")
+            try:
+                supabase.table("telegram_payment_sessions").update({
+                    "raw_response": {"cashfree_missing_payment_session_id": resp_json},
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("session_id", session_id).execute()
+            except Exception:
+                pass
             return None, None
 
         supabase.table("telegram_payment_sessions").update({
             "gateway_order_id": order_id,
             "status": "processing",
-            "raw_response": data,
+            "raw_response": resp_json,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }).eq("session_id", session_id).execute()
 
+        print(f"✅ Cashfree order created: {order_id}")
         return order_id, payment_session_id
     except Exception as e:
         print(f"Create Cashfree order for session error: {e}")
         import traceback
         traceback.print_exc()
         return None, None
-
 
 def process_telegram_session_success(order_id, payment_id=None, raw_response=None):
     """Add credits/unlimited/protection for telegram_payment_sessions once payment is PAID."""
@@ -1420,8 +1444,9 @@ def telegram_payment_session_page(session_id):
             return """
             <html><body style="font-family:Arial;text-align:center;padding:40px;background:#0b0f17;color:white;">
             <h2>❌ Payment Gateway Error</h2>
-            <p>Could not create payment link right now.</p>
-            <p>Please return to Telegram and try again.</p>
+            <p>Could not create Cashfree payment session right now.</p>
+            <p>Please check Render logs for <b>Cashfree Response Status</b> and <b>Cashfree Response Body</b>.</p>
+            <p>Return to Telegram and try again.</p>
             </body></html>
             """, 500
 
