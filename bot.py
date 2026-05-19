@@ -40,6 +40,7 @@ GROUP_LINK = os.getenv("GROUP_LINK", "https://t.me/Gaurav_beni_0001")
 # Website Payment Session Configuration
 # Your existing website/backend will open and verify this session link.
 TELEGRAM_PAYMENT_BASE_URL = os.getenv("PAYMENT_BASE_URL") or os.getenv("TELEGRAM_PAYMENT_BASE_URL", "https://tracexnumber-bot.onrender.com")
+CASHFREE_RETURN_BASE_URL = os.getenv("CASHFREE_RETURN_BASE_URL", "https://tracexnumber.web.app")
 PAYMENT_SESSION_TTL_MINUTES = int(os.getenv("PAYMENT_SESSION_TTL_MINUTES", "10"))
 PAYMENT_SESSION_CLEANUP_DAYS = int(os.getenv("PAYMENT_SESSION_CLEANUP_DAYS", "1"))
 # Optional forwarding target for your existing private checkout backend.
@@ -581,7 +582,9 @@ def create_cashfree_order_for_session(session):
             return None, None
 
         base_url = TELEGRAM_PAYMENT_BASE_URL.rstrip("/")
-        return_url = f"{base_url}/payment/success?order_id={{order_id}}"
+        return_base_url = CASHFREE_RETURN_BASE_URL.rstrip("/")
+        # Cashfree checkout should return to approved website domain, while webhook stays on Render.
+        return_url = f"{return_base_url}/payment-success?session_id={session_id}&order_id={{order_id}}"
         notify_url = f"{base_url}/cashfree/webhook"
 
         # Cashfree PG Orders API payload. Keep it minimal and valid for PROD.
@@ -1493,12 +1496,95 @@ def telegram_payment_session_page(session_id):
         traceback.print_exc()
         return "Payment page error. Please try again.", 500
 
+
+@app.route('/verify-payment/<session_id>', methods=['GET'])
+def verify_telegram_payment(session_id):
+    """Website success page calls this route to verify payment and add Telegram credits/plan."""
+    try:
+        resp = supabase.table("telegram_payment_sessions").select("*").eq("session_id", session_id).limit(1).execute()
+        if not resp.data:
+            return jsonify({"success": False, "status": "invalid", "message": "Invalid payment session"}), 404
+
+        session = resp.data[0]
+        status = str(session.get("status") or "pending").lower()
+        plan_id = session.get("plan_id")
+        credits = int(session.get("credits") or 0)
+        unlimited_minutes = int(session.get("unlimited_minutes") or 0)
+
+        if status == "success":
+            return jsonify({
+                "success": True,
+                "status": "success",
+                "message": "Payment already verified",
+                "credits_added": credits,
+                "plan_id": plan_id,
+                "unlimited_minutes": unlimited_minutes
+            }), 200
+
+        expires_raw = session.get("expires_at")
+        if expires_raw:
+            try:
+                expires_at = datetime.fromisoformat(str(expires_raw).replace('Z', '+00:00'))
+                if expires_at <= datetime.now(timezone.utc) and status in ["pending", "processing"]:
+                    supabase.table("telegram_payment_sessions").update({
+                        "status": "expired",
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("session_id", session_id).execute()
+                    return jsonify({"success": False, "status": "expired", "message": "Payment link expired"}), 410
+            except Exception as exp_e:
+                print(f"Verify expiry parse warning: {exp_e}")
+
+        order_id = session.get("gateway_order_id")
+        if not order_id:
+            return jsonify({"success": False, "status": status, "message": "Payment order not created yet"}), 200
+
+        order_data = get_cashfree_order_status(order_id)
+        if not order_data:
+            return jsonify({"success": False, "status": status, "message": "Unable to verify payment right now"}), 200
+
+        order_status = str(order_data.get("order_status") or "").upper()
+        print(f"Website verify route: session={session_id} order={order_id} status={order_status}")
+
+        if order_status in ["PAID", "SUCCESS", "COMPLETED"]:
+            payment_id = order_data.get("payment_id") or order_data.get("cf_payment_id")
+            ok = process_telegram_session_success(order_id, payment_id, order_data)
+            return jsonify({
+                "success": bool(ok),
+                "status": "success" if ok else "processing_error",
+                "message": "Payment verified" if ok else "Payment verified but credit update failed",
+                "credits_added": credits,
+                "plan_id": plan_id,
+                "unlimited_minutes": unlimited_minutes
+            }), 200 if ok else 500
+
+        return jsonify({
+            "success": False,
+            "status": order_status.lower() or status,
+            "message": "Payment pending or failed",
+            "credits_added": 0,
+            "plan_id": plan_id
+        }), 200
+    except Exception as e:
+        print(f"Verify telegram payment error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "status": "error", "message": str(e)}), 500
+
 @app.route('/payment/success', methods=['GET'])
 def payment_success():
-    """Payment success redirect page"""
+    """Payment success redirect page. Fallback if Cashfree returns to Render instead of web.app."""
     order_id = request.args.get('order_id', '')
+    session_id = request.args.get('session_id', '')
+
+    if session_id and not order_id:
+        try:
+            resp = supabase.table("telegram_payment_sessions").select("gateway_order_id").eq("session_id", session_id).limit(1).execute()
+            if resp.data:
+                order_id = resp.data[0].get("gateway_order_id") or ""
+        except Exception as e:
+            print(f"payment_success session lookup warning: {e}")
     
-    order_data = get_cashfree_order_status(order_id)
+    order_data = get_cashfree_order_status(order_id) if order_id else None
     
     if order_data and str(order_data.get('order_status', '')).upper() in ['PAID', 'SUCCESS', 'COMPLETED']:
         process_telegram_session_success(order_id, order_data.get('payment_id') or order_data.get('cf_payment_id'), order_data)
@@ -2251,6 +2337,7 @@ if __name__ == "__main__":
     print(f"Admin ID: {ADMIN_ID}")
     print(f"Admin: {ADMIN_USERNAME}")
     print(f"Payment Base URL: {TELEGRAM_PAYMENT_BASE_URL}")
+    print(f"Cashfree Return Base URL: {CASHFREE_RETURN_BASE_URL}")
     print(f"Checkout Forward URL: {TELEGRAM_PAYMENT_CHECKOUT_BASE_URL or 'NOT SET'}")
     print(f"Payment Session TTL: {PAYMENT_SESSION_TTL_MINUTES} minutes")
     print(f"Admin/Log Channel ID: {ADMIN_CHANNEL_ID}")
