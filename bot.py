@@ -522,6 +522,10 @@ def get_cashfree_order_status(order_id):
 def create_cashfree_order(plan_id, amount, telegram_user_id, telegram_username, payment_for=None, protected_number=None):
     """Create a real Cashfree order and return payment link"""
     try:
+
+        print("Cashfree Response Status:", response.status_code)
+print("Cashfree Response Body:", response.text[:2000])
+    
         # Validate Cashfree credentials
         if not CASHFREE_APP_ID or not CASHFREE_SECRET_KEY:
             print("ERROR: Cashfree credentials missing! CASHFREE_APP_ID and CASHFREE_SECRET_KEY must be set in environment variables.")
