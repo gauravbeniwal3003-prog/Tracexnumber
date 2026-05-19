@@ -39,13 +39,14 @@ GROUP_LINK = os.getenv("GROUP_LINK", "https://t.me/Gaurav_beni_0001")
 
 # Website Payment Session Configuration
 # Your existing website/backend will open and verify this session link.
-TELEGRAM_PAYMENT_BASE_URL = os.getenv("PAYMENT_BASE_URL") or os.getenv("TELEGRAM_PAYMENT_BASE_URL", "https://tracexnumber-bot.onrender.com")
+# IMPORTANT: PAYMENT_BASE_URL is the Render bot backend URL used for /pay and webhook.
+# Do NOT use old TELEGRAM_PAYMENT_BASE_URL here because it can force Cashfree to see Render as return domain.
+TELEGRAM_PAYMENT_BASE_URL = os.getenv("PAYMENT_BASE_URL", "https://tracexnumber-bot.onrender.com")
 CASHFREE_RETURN_BASE_URL = os.getenv("CASHFREE_RETURN_BASE_URL", "https://tracexnumber.web.app")
 PAYMENT_SESSION_TTL_MINUTES = int(os.getenv("PAYMENT_SESSION_TTL_MINUTES", "10"))
 PAYMENT_SESSION_CLEANUP_DAYS = int(os.getenv("PAYMENT_SESSION_CLEANUP_DAYS", "1"))
-# Optional forwarding target for your existing private checkout backend.
-# Visible Telegram link stays on Render: /pay/<session_id>.
-TELEGRAM_PAYMENT_CHECKOUT_BASE_URL = os.getenv("TELEGRAM_PAYMENT_CHECKOUT_BASE_URL", "")
+# Old redirect model disabled. Direct Cashfree is used.
+TELEGRAM_PAYMENT_CHECKOUT_BASE_URL = ""
 
 PLAN_CONFIG = {
     "c10": {"amount": 20, "credits": 10, "unlimited_minutes": 0, "payment_for": "credits", "label": "10 Credits"},
@@ -617,6 +618,8 @@ def create_cashfree_order_for_session(session):
         print("Cashfree Env:", CASHFREE_ENV)
         print("Cashfree API Base:", api_base)
         print("Cashfree API Version:", CASHFREE_API_VERSION)
+        print("Cashfree return_url:", return_url)
+        print("Cashfree notify_url:", notify_url)
         print("Cashfree Payload:", json.dumps(payload, ensure_ascii=False))
 
         response = requests.post(f"{api_base}/orders", headers=headers, json=payload, timeout=30)
@@ -2338,7 +2341,7 @@ if __name__ == "__main__":
     print(f"Admin: {ADMIN_USERNAME}")
     print(f"Payment Base URL: {TELEGRAM_PAYMENT_BASE_URL}")
     print(f"Cashfree Return Base URL: {CASHFREE_RETURN_BASE_URL}")
-    print(f"Checkout Forward URL: {TELEGRAM_PAYMENT_CHECKOUT_BASE_URL or 'NOT SET'}")
+    print("Checkout Forward URL: DISABLED - Direct Cashfree")
     print(f"Payment Session TTL: {PAYMENT_SESSION_TTL_MINUTES} minutes")
     print(f"Admin/Log Channel ID: {ADMIN_CHANNEL_ID}")
     print("=" * 50)
