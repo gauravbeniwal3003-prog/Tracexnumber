@@ -35,7 +35,7 @@ LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number")
 
 COOLDOWN_SECONDS = 3
 AUTO_DELETE_SECONDS = 120
-GROUP_LINK = os.getenv("GROUP_LINK", "https://t.me/Gaurav_beni_0001")
+GROUP_LINK = "https://t.me/Gaurav_beni_0001"
 PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
 
 # Manual QR Plan Configuration
@@ -47,7 +47,7 @@ PLAN_CONFIG = {
     "u1d": {"amount": 29, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited"},
     "u1w": {"amount": 149, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited"},
     "u1m": {"amount": 399, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited"},
-    "protect49": {"amount": 49, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Protect Number"},
+    "protect49": {"amount": 0, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Protect Number - 25 Credits"},
 }
 
 
@@ -81,6 +81,12 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 user_states = {}
 user_cooldown = {}
 temp_data = {}
+
+# 24-hour search summary storage. No per-search spam is sent to admin channel.
+daily_search_stats = {}
+daily_stats_lock = threading.Lock()
+IST = timezone(timedelta(hours=5, minutes=30))
+
 MAINTENANCE_MODE = False
 
 # ==================== MAINTENANCE MODE ====================
@@ -161,7 +167,7 @@ def credit_packs_markup():
         InlineKeyboardButton("🚀 30 Days Unlimited - ₹399", callback_data="plan_u1m")
     )
     markup.add(
-        InlineKeyboardButton("🛡️ Protect Number - ₹49", callback_data="plan_protect49")
+        InlineKeyboardButton("🛡️ Protect Number - 25 Credits", callback_data="plan_protect49")
     )
     markup.add(InlineKeyboardButton("🔙 BACK", callback_data="main_menu"))
     return markup
@@ -989,15 +995,14 @@ def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number
 🧾 TX ID: `{tx_code}`
 
 ✅ Pay exactly ₹{plan['amount']} on this QR.
-📩 After payment, send screenshot to admin or wait for manual verification.
+📩 After payment, tap below and send screenshot here. It will be forwarded to admin for manual verification.
 
 ━━━━━━━━━━━━━━━━━━
 📞 Admin: {ADMIN_USERNAME}
 """
 
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("✅ I PAID / CHECK", callback_data=f"checkpay_{tx_code}"))
-    markup.add(InlineKeyboardButton("👨‍💻 SEND SCREENSHOT TO ADMIN", url="https://t.me/gaurav_beniwal_0001"))
+    markup.add(InlineKeyboardButton("📸 SEND PAYMENT SCREENSHOT", callback_data=f"submitproof_{tx_code}"))
     markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
 
     qr_path = PAYMENT_QR_IMAGE
@@ -1020,14 +1025,88 @@ def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number
         bot.send_message(chat_id, caption, reply_markup=markup, parse_mode="Markdown")
 
     try:
+        admin_markup = InlineKeyboardMarkup()
+        admin_markup.add(InlineKeyboardButton("✅ VERIFY PAYMENT", callback_data=f"adminverify_{tx_code}"))
         bot.send_message(
             ADMIN_CHANNEL_ID,
-            f"💳 *MANUAL QR PAYMENT CREATED*\n━━━━━━━━━━━━━━━━\n👤 User: `{user_id}`\n@ Username: @{username}\n📦 Plan: `{plan_id}`\n💰 Amount: ₹{plan['amount']}\n🧾 TX: `{tx_code}`\n\nVerify after payment:\n`/verify {tx_code}`",
+            f"💳 *MANUAL QR PAYMENT CREATED*\n━━━━━━━━━━━━━━━━\n👤 User: `{user_id}`\n@ Username: @{username}\n📦 Plan: `{plan_id}`\n💰 Amount: ₹{plan['amount']}\n🧾 TX: `{tx_code}`\n\nVerify after checking screenshot/payment:\n`/verify {tx_code}`",
+            reply_markup=admin_markup,
             parse_mode="Markdown"
         )
     except Exception as e:
         print(f"Admin manual payment log failed: {e}")
 
+
+
+# ==================== DAILY SEARCH REPORT ====================
+def record_search_for_daily_report(user_id, username, first_name, phone, found=True):
+    """Store only aggregate search stats for the 6 AM report. No instant search log spam."""
+    try:
+        key = str(user_id)
+        with daily_stats_lock:
+            row = daily_search_stats.setdefault(key, {
+                "user_id": user_id,
+                "username": username or "no_username",
+                "first_name": first_name or "User",
+                "searches": 0,
+                "found": 0,
+                "not_found": 0,
+                "last_number": ""
+            })
+            row["searches"] += 1
+            row["last_number"] = phone
+            if found:
+                row["found"] += 1
+            else:
+                row["not_found"] += 1
+    except Exception as e:
+        print(f"Daily report record error: {e}")
+
+def build_daily_report_text(stats_snapshot):
+    total_searches = sum(v.get("searches", 0) for v in stats_snapshot.values())
+    total_users = len(stats_snapshot)
+    found = sum(v.get("found", 0) for v in stats_snapshot.values())
+    not_found = sum(v.get("not_found", 0) for v in stats_snapshot.values())
+    top = sorted(stats_snapshot.values(), key=lambda x: x.get("searches", 0), reverse=True)[:10]
+
+    lines = [
+        "📊 *TRACEX 24H SEARCH REPORT*",
+        "━━━━━━━━━━━━━━━━",
+        f"🕕 Report Time: `{datetime.now(IST).strftime('%Y-%m-%d 06:00 IST')}`",
+        f"👥 Users Searched: `{total_users}`",
+        f"🔍 Total Searches: `{total_searches}`",
+        f"✅ Found: `{found}`",
+        f"❌ No Data: `{not_found}`",
+        "",
+        "🏆 *TOP SEARCHERS*"
+    ]
+    if not top:
+        lines.append("No searches in last 24 hours.")
+    else:
+        for i, row in enumerate(top, 1):
+            uname = row.get("username") or "no_username"
+            display = f"@{uname}" if uname != "no_username" else row.get("first_name", "User")
+            lines.append(f"{i}. {display} | ID `{row.get('user_id')}` | `{row.get('searches', 0)}` searches")
+    lines.append("━━━━━━━━━━━━━━━━")
+    return "\n".join(lines)
+
+def send_daily_search_report_loop():
+    """Send one aggregated report every day at 6 AM IST."""
+    while True:
+        try:
+            now = datetime.now(IST)
+            target = now.replace(hour=6, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            sleep_seconds = max(60, int((target - now).total_seconds()))
+            time.sleep(sleep_seconds)
+            with daily_stats_lock:
+                snapshot = dict(daily_search_stats)
+                daily_search_stats.clear()
+            bot.send_message(ADMIN_CHANNEL_ID, build_daily_report_text(snapshot), parse_mode="Markdown")
+        except Exception as e:
+            print(f"Daily report loop error: {e}")
+            time.sleep(300)
 
 # ==================== RESULT FORMATTING ====================
 def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
@@ -1201,7 +1280,7 @@ This number is protected by the Number Protection Plan.
 
 The owner has purchased privacy protection. Details are hidden.
 
-You can also protect your number for just ₹49!
+You can also protect your number for 25 credits!
 """, reply_markup=markup, parse_mode='Markdown')
         return
     
@@ -1235,19 +1314,7 @@ You can also protect your number for just ₹49!
         
         sent_msg = bot.edit_message_text(output, message.chat.id, loading_msg.message_id, reply_markup=markup, parse_mode='Markdown')
         
-        log_message = f"""
-🔍 *SEARCH LOG (Cached)*
-━━━━━━━━━━━━━━━━
-👤 User: {message.from_user.first_name}
-🆔 ID: `{user_id}`
-📱 Number: `{phone}`
-👤 Name Found: `{first_name}`
-🕐 Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        try:
-            bot.send_message(ADMIN_CHANNEL_ID, log_message, parse_mode='Markdown')
-        except:
-            pass
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True)
         
         def auto_delete():
             time.sleep(AUTO_DELETE_SECONDS)
@@ -1287,19 +1354,7 @@ You can also protect your number for just ₹49!
         
         sent_msg = bot.edit_message_text(output, message.chat.id, loading_msg.message_id, reply_markup=markup, parse_mode='Markdown')
         
-        log_message = f"""
-🔍 *SEARCH LOG*
-━━━━━━━━━━━━━━━━
-👤 User: {message.from_user.first_name}
-🆔 ID: `{user_id}`
-📱 Number: `{phone}`
-👤 Name Found: `{first_name}`
-🕐 Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        try:
-            bot.send_message(ADMIN_CHANNEL_ID, log_message, parse_mode='Markdown')
-        except:
-            pass
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True)
         
         def auto_delete():
             time.sleep(AUTO_DELETE_SECONDS)
@@ -1332,18 +1387,7 @@ You can also protect your number for just ₹49!
         
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
         
-        log_message = f"""
-🔍 *SEARCH LOG (No Data)*
-━━━━━━━━━━━━━━━━
-👤 User: {message.from_user.first_name}
-🆔 ID: `{user_id}`
-📱 Number: `{phone}`
-🕐 Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        try:
-            bot.send_message(ADMIN_CHANNEL_ID, log_message, parse_mode='Markdown')
-        except:
-            pass
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False)
 
 # ==================== FLASK WEBHOOK ====================
 app = Flask(__name__)
@@ -1529,12 +1573,12 @@ def show_credit_packs(message, user_id):
 • 30 Days Unlimited → ₹399
 
 🛡️ *PROTECTION*
-• Protect Number → ₹49
+• Protect Number → 25 Credits
 
 ━━━━━━━━━━━━━━━━━━
 ✅ Permanent Credits NEVER EXPIRE
 ✅ Unlimited Plans for heavy users
-✅ Secure Payments via Cashfree
+✅ Manual payment verification
 
 👇 Select your plan below
 {footer()}
@@ -1555,11 +1599,11 @@ def handle_plan_selection(call):
         user_states[user_id] = "awaiting_protect_number"
         msg = bot.send_message(
             call.message.chat.id,
-            "🛡️ *PROTECT NUMBER*\n\nEnter the 10-digit mobile number you want to protect:\n\n`Example: 9876543210`\n\nAfter this, QR will be sent for ₹49.\n\nType /cancel to abort",
+            "🛡️ *PROTECT NUMBER*\n\nEnter the 10-digit mobile number you want to protect:\n\n`Example: 9876543210`\n\nAfter this, 25 credits will be deducted. Unlimited plan will not work for protection.\n\nType /cancel to abort",
             reply_markup=cancel_button(),
             parse_mode='Markdown'
         )
-        bot.register_next_step_handler(msg, process_protect_number, plan_id, plan["amount"])
+        bot.register_next_step_handler(msg, process_protect_number, plan_id, 25)
         bot.answer_callback_query(call.id)
         return
 
@@ -1586,8 +1630,42 @@ def process_protect_number(message, plan_id, amount):
         bot.reply_to(message, f"❌ *Number already protected!*\n\n📱 `{phone}`\n\nThis number is already in the protection list.", parse_mode='Markdown')
         return
 
-    username = message.from_user.username or "no_username"
-    send_manual_qr_payment(message.chat.id, user_id, username, plan_id, protected_number=phone)
+    user = get_user(user_id)
+    credits = int(user.get("credits", 0)) if user else 0
+
+    if credits < 25:
+        bot.reply_to(
+            message,
+            f"❌ *Not enough credits!*\n\n🛡️ Number Protection costs `25 credits`.\n💎 Your credits: `{credits}`\n\nUnlimited plan cannot activate number protection.",
+            reply_markup=universal_markup(buy=True, back=True, admin=True),
+            parse_mode='Markdown'
+        )
+        return
+
+    updated = update_user_credits(user_id, credits - 25)
+    if updated is None:
+        bot.reply_to(message, "❌ Could not deduct credits. Try again or contact admin.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        return
+
+    if add_protected_number(phone, user_id):
+        bot.reply_to(
+            message,
+            f"✅ *NUMBER PROTECTED*\n━━━━━━━━━━━━━━━━\n📱 Number: `{phone}`\n💎 Cost: `25 credits`\n💰 Credits Left: `{updated}`\n\nUnlimited plan was not used for this service.",
+            reply_markup=main_menu_markup(user_id),
+            parse_mode='Markdown'
+        )
+        try:
+            bot.send_message(
+                ADMIN_CHANNEL_ID,
+                f"🛡️ *NUMBER PROTECTED*\n━━━━━━━━━━━━━━━━\n👤 User: `{user_id}`\n@ Username: @{message.from_user.username or 'no_username'}\n📱 Number: `{phone}`\n💎 Cost: `25 credits`",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            print(f"Protect admin log failed: {e}")
+    else:
+        # Refund if protected_numbers insert fails.
+        update_user_credits(user_id, credits)
+        bot.reply_to(message, "❌ Protection failed. Credits refunded. Contact admin.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
 
 # ==================== BOT HANDLERS ====================
 @bot.message_handler(commands=['start'])
@@ -1664,6 +1742,28 @@ def cancel_command(message):
         del temp_data[user_id]
     bot.reply_to(message, "❌ Cancelled. Use /start for main menu.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
 
+
+@bot.message_handler(content_types=['photo', 'document'])
+def payment_screenshot_handler(message):
+    user_id = message.from_user.id
+    state = user_states.get(user_id)
+    if not (isinstance(state, dict) and state.get("state") == "awaiting_payment_screenshot"):
+        return
+
+    tx_code = state.get("tx_code")
+    caption = f"📸 *PAYMENT SCREENSHOT RECEIVED*\n━━━━━━━━━━━━━━━━\n👤 User: `{user_id}`\n@ Username: @{message.from_user.username or 'no_username'}\n🧾 TX: `{tx_code}`\n\nVerify only after checking payment:\n`/verify {tx_code}`"
+    admin_markup = InlineKeyboardMarkup()
+    admin_markup.add(InlineKeyboardButton("✅ VERIFY PAYMENT", callback_data=f"adminverify_{tx_code}"))
+
+    try:
+        bot.forward_message(ADMIN_CHANNEL_ID, message.chat.id, message.message_id)
+        bot.send_message(ADMIN_CHANNEL_ID, caption, reply_markup=admin_markup, parse_mode='Markdown')
+        bot.reply_to(message, f"✅ Screenshot sent to admin.\n\n🧾 TX: `{tx_code}`\n⏳ Wait for manual verification.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        user_states.pop(user_id, None)
+    except Exception as e:
+        print(f"Payment screenshot forward error: {e}")
+        bot.reply_to(message, f"❌ Could not forward screenshot. Contact {ADMIN_USERNAME}", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+
 @bot.message_handler(commands=['maintenance'])
 def toggle_maintenance(message):
     global MAINTENANCE_MODE
@@ -1693,7 +1793,13 @@ def callback_handler(call):
         return
     
     if call.data == "main_menu":
-        bot.edit_message_text("🏠 *MAIN MENU*", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        try:
+            bot.edit_message_text("🏠 *MAIN MENU*", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        except Exception:
+            try:
+                bot.edit_message_caption("🏠 *MAIN MENU*", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+            except Exception:
+                bot.send_message(call.message.chat.id, "🏠 *MAIN MENU*", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         bot.answer_callback_query(call.id)
     elif call.data == "cancel":
         if user_id in user_states:
@@ -1710,7 +1816,7 @@ def callback_handler(call):
     elif call.data == "protect":
         user_states[user_id] = "awaiting_protect_number"
         msg = bot.send_message(call.message.chat.id, "🛡️ *PROTECT NUMBER*\n\nEnter the 10-digit mobile number you want to protect:\n\n`Example: 9876543210`\n\n⚠️ Once protected, no one can lookup details for this number!\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
-        bot.register_next_step_handler(msg, process_protect_number, "protect49", 49)
+        bot.register_next_step_handler(msg, process_protect_number, "protect49", 25)
         bot.answer_callback_query(call.id)
     elif call.data == "credits":
         total_credits = get_total_credits(user_id)
@@ -1742,7 +1848,7 @@ def callback_handler(call):
 • 7 Days → ₹149
 • 30 Days → ₹399
 *🛡️ PROTECTION*
-• Protect Number → ₹49
+• Protect Number → 25 Credits
 """
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🛒 BUY CREDITS", callback_data="buy"))
@@ -1752,6 +1858,22 @@ def callback_handler(call):
     elif call.data == "buy":
         show_credit_packs(call.message, user_id)
         bot.answer_callback_query(call.id)
+    elif call.data.startswith("submitproof_"):
+        tx_code = call.data.replace("submitproof_", "", 1)
+        user_states[user_id] = {"state": "awaiting_payment_screenshot", "tx_code": tx_code}
+        bot.send_message(call.message.chat.id, f"📸 *Send payment screenshot now*\n\n🧾 TX: `{tx_code}`\n\nYour screenshot will be forwarded to admin for manual verification.", reply_markup=cancel_button(), parse_mode='Markdown')
+        bot.answer_callback_query(call.id, "Now send screenshot here")
+    elif call.data.startswith("adminverify_"):
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "Unauthorized!", show_alert=True)
+            return
+        tx_code = call.data.replace("adminverify_", "", 1)
+        ok, msg = manual_verify_payment(tx_code, user_id)
+        bot.answer_callback_query(call.id, "Verified" if ok else msg, show_alert=not ok)
+        try:
+            bot.send_message(call.message.chat.id, f"{'✅' if ok else '❌'} {msg}")
+        except Exception:
+            pass
     elif call.data.startswith("plan_"):
         handle_plan_selection(call)
     elif call.data == "profile":
@@ -1796,12 +1918,12 @@ def callback_handler(call):
 • Credits never expire
 • Each lookup costs 1 credit
 • Unlimited plans available
-• Protected numbers cost ₹49
+• Protected numbers cost 25 credits
 ━━━━━━━━━━━━━━━━━━
 🛒 BUYING
 • Select plan
-• Make payment via Cashfree
-• Automatic activation
+• Scan QR, pay exact amount, then send screenshot
+• Admin verifies manually
 ━━━━━━━━━━━━━━━━━━
 ⚡ FEATURES
 ✅ Fast Lookup
@@ -2166,6 +2288,9 @@ if __name__ == "__main__":
     # Start Flask keep_alive server
     keep_alive()
     print("✅ Flask server started on port 8080")
+
+    threading.Thread(target=send_daily_search_report_loop, daemon=True).start()
+    print("✅ Daily 6 AM IST report scheduler started")
     
     print("✅ Bot is running! Press Ctrl+C to stop.")
     print("=" * 50)
