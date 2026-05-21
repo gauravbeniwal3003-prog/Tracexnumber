@@ -29,7 +29,7 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@gaurav_beniwal_0001")
 BOT_VERSION = "5.5.1"
 
 # Lookup API Configuration
-LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/apibuy/public/lookup.php")
+LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/api/v1/lookup.php")
 LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "TVB_SGL_053B3AA6")
 LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number")
 
@@ -1327,7 +1327,7 @@ You can also protect your number for 25 credits!
         return
     
     try:
-        url = f"{LOOKUP_API_URL}?key={LOOKUP_API_KEY}&service={LOOKUP_API_SERVICE}&query={phone}"
+        url = f"{LOOKUP_API_URL}?key={LOOKUP_API_KEY}&service={LOOKUP_API_SERVICE}&number={phone}"
         r = requests.get(url, timeout=10)
         result = r.json()
     except Exception as e:
