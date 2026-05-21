@@ -30,7 +30,7 @@ BOT_VERSION = "5.5.1"
 
 # Lookup API Configuration
 LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/apibuy/public/lookup.php")
-LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "TVB_Y9T032")
+LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "TVB_SGL_053B3AA6")
 LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number")
 
 COOLDOWN_SECONDS = 3
