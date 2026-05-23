@@ -48,6 +48,23 @@ GROUP_LINK = "https://t.me/Gaurav_beni_0001"
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Gaurav_beni_0001")
 PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
 
+# Generic API error shown to users. Never expose provider/API raw errors in Telegram.
+GENERIC_API_ERROR_MESSAGE = "❌ *API Error*\n\n💎 Credits NOT deducted"
+
+def show_api_error(chat_id, message_id, lookup_type="api"):
+    """Show only a clean API error to users; keep provider/raw errors out of Telegram replies."""
+    try:
+        bot.edit_message_text(GENERIC_API_ERROR_MESSAGE, chat_id, message_id, parse_mode="Markdown")
+    except Exception as edit_error:
+        print(f"Failed to show generic API error for {lookup_type}: {edit_error}")
+
+def safe_json_response(response):
+    """Parse JSON safely and raise a generic exception if upstream response is invalid."""
+    try:
+        return response.json()
+    except Exception:
+        raise ValueError("Invalid API JSON response")
+
 # Manual QR Plan Configuration
 PLAN_CONFIG = {
     "c10": {"amount": 20, "credits": 10, "unlimited_minutes": 0, "payment_for": "credits", "label": "10 Credits"},
@@ -1501,8 +1518,17 @@ def process_vehicle_lookup(message):
         bot.reply_to(message, "❌ Cancelled!", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
 
-    if not re.match(r'^[A-Z]{2}\d{2}[A-Z]{1,3}\d{4}$', rc_number):
-        bot.reply_to(message, "❌ *Invalid vehicle number!*\n\nEnter vehicle number in this format:\n`MH01AB1234`", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+    # Accept all vehicle number inputs without fixed RC pattern restriction.
+    # Only clean spaces, hyphens, symbols, and lowercase before sending to API.
+    rc_number = re.sub(r'[^A-Z0-9]', '', rc_number)
+
+    if not rc_number:
+        bot.reply_to(
+            message,
+            "❌ *Invalid vehicle number!*\n\nPlease enter a vehicle number.",
+            reply_markup=main_menu_markup(user_id),
+            parse_mode='Markdown'
+        )
         return
 
     if user_id in user_cooldown and time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
@@ -1543,9 +1569,10 @@ def process_vehicle_lookup(message):
     try:
         url = f"{VEHICLE_LOOKUP_API_URL}?key={VEHICLE_LOOKUP_API_KEY}&service={VEHICLE_LOOKUP_API_SERVICE}&rc={rc_number}"
         r = requests.get(url, timeout=20)
-        result = r.json()
+        result = safe_json_response(r)
     except Exception as e:
-        bot.edit_message_text(f"❌ *Vehicle API Error*\n\n`{str(e)}`\n\n💎 Credits NOT deducted", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        print(f"Vehicle lookup API error: {e}")
+        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle")
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, rc_number, found=False, lookup_type="vehicle", credits_used=0)
         return
 
@@ -1706,9 +1733,11 @@ You can also protect your number for 50 credits!
     try:
         url = f"{LOOKUP_API_URL}?key={LOOKUP_API_KEY}&service={LOOKUP_API_SERVICE}&number={phone}"
         r = requests.get(url, timeout=10)
-        result = r.json()
+        result = safe_json_response(r)
     except Exception as e:
-        bot.edit_message_text(f"❌ *API Error*\n\n{str(e)}", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        print(f"Number lookup API error: {e}")
+        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="number")
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
         return
 
     if result and result.get('results'):
