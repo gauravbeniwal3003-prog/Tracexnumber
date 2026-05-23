@@ -26,7 +26,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7850023357"))
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "-1003743686626"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@gaurav_beniwal_0001")
-BOT_VERSION = "5.5.2"
+BOT_VERSION = "5.6.0"
 
 # Lookup API Configuration
 LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/api/v1/lookup.php")
@@ -45,6 +45,7 @@ PROTECT_NUMBER_COST = 50
 COOLDOWN_SECONDS = 3
 AUTO_DELETE_SECONDS = 120
 GROUP_LINK = "https://t.me/Gaurav_beni_0001"
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Gaurav_beni_0001")
 PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
 
 # Manual QR Plan Configuration
@@ -57,6 +58,7 @@ PLAN_CONFIG = {
     "u1w": {"amount": 199, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited"},
     "u1m": {"amount": 499, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited"},
     "protect49": {"amount": 0, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Protect Number - 50 Credits"},
+    "bot_booking": {"amount": 399, "credits": 0, "unlimited_minutes": 0, "payment_for": "bot_booking", "label": "Custom Bot Booking Add-on"},
 }
 
 
@@ -90,6 +92,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 user_states = {}
 user_cooldown = {}
 temp_data = {}
+payment_session_cooldown = {}
+PAYMENT_SESSION_COOLDOWN_SECONDS = 60
 
 # 24-hour search summary storage. No per-search spam is sent to admin channel.
 daily_search_stats = {}
@@ -137,6 +141,34 @@ def footer():
 def header(title, emoji="🚀"):
     return f"{emoji} *{title}*\n━━━━━━━━━━━━━━━━\n"
 
+
+def join_required_markup():
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton("📢 JOIN CHANNEL", url=GROUP_LINK))
+    markup.add(InlineKeyboardButton("✅ I HAVE JOINED", callback_data="check_join"))
+    return markup
+
+def is_channel_member(user_id):
+    """Return True only if user has joined the required channel. Admin bypasses this check."""
+    if user_id == ADMIN_ID:
+        return True
+    try:
+        member = bot.get_chat_member(REQUIRED_CHANNEL, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except Exception as e:
+        print(f"Channel membership check error for {user_id}: {e}")
+        return False
+
+def send_join_required(chat_id):
+    bot.send_message(
+        chat_id,
+        f"🔒 *Join Required*\n━━━━━━━━━━━━━━━━\n\nBot use karne ke liye pehle official channel join karo.\n\n📢 Channel: {GROUP_LINK}\n\nJoin karne ke baad `✅ I HAVE JOINED` dabao.",
+        reply_markup=join_required_markup(),
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
+
+
 def main_menu_markup(current_user_id=None):
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -144,7 +176,8 @@ def main_menu_markup(current_user_id=None):
         InlineKeyboardButton("🚗 VEHICLE LOOKUP", callback_data="vehicle_lookup")
     )
     markup.add(
-        InlineKeyboardButton("💎 MY CREDITS", callback_data="credits")
+        InlineKeyboardButton("💎 MY CREDITS", callback_data="credits"),
+        InlineKeyboardButton("🤖 BOOK A BOT", callback_data="book_bot")
     )
     markup.add(
         InlineKeyboardButton("🛒 BUY CREDITS", callback_data="buy"),
@@ -923,6 +956,9 @@ def fulfill_manual_claim(claim):
                 add_protected_number(number, int(telegram_user_id))
             return True, f"Protected number {number}"
 
+        if plan["payment_for"] == "bot_booking":
+            return True, "Bot booking confirmed. Delivery window: 24 to 48 hours after requirements are clear."
+
         return False, "Unknown payment type"
 
     except Exception as e:
@@ -995,12 +1031,83 @@ def manual_verify_payment(tx_code, admin_id=None):
         traceback.print_exc()
         return False, str(e)
 
+
+
+def manual_reject_payment(tx_code, admin_id=None, reason="Payment not confirmed"):
+    """Admin command/button: reject a pending manual payment claim."""
+    try:
+        tx_code = str(tx_code or "").strip()
+        claim_resp = None
+        for field in ["session_id", "payment_id", "cashfree_order_id"]:
+            try:
+                claim_resp = supabase.table("payment_claims").select("*").eq(field, tx_code).limit(1).execute()
+                if claim_resp.data:
+                    break
+            except Exception as e:
+                print(f"Manual reject lookup skipped {field}: {e}")
+
+        if not claim_resp or not claim_resp.data:
+            return False, "Transaction not found"
+
+        claim = claim_resp.data[0]
+        status = str(claim.get("status") or "").lower()
+        if status == "success":
+            return False, "Already verified, cannot reject"
+        if status == "rejected":
+            return False, "Already rejected"
+
+        now = datetime.now(timezone.utc).isoformat()
+        supabase.table("payment_claims").update({
+            "status": "rejected",
+            "updated_at": now,
+            "raw_response": {
+                "mode": "manual_static_qr",
+                "rejected_by": str(admin_id or ADMIN_ID),
+                "rejected_at": now,
+                "reason": reason
+            }
+        }).eq("id", claim.get("id")).execute()
+
+        telegram_user_id = int(claim.get("telegram_user_id"))
+        try:
+            bot.send_message(
+                telegram_user_id,
+                f"❌ *Payment Rejected*\n\n🧾 TX: `{tx_code}`\nReason: `{reason}`\n\nAgar payment kiya hai to clear screenshot/UTR ke saath admin ko contact karo: {ADMIN_USERNAME}",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"User reject message failed: {e}")
+
+        try:
+            bot.send_message(
+                ADMIN_CHANNEL_ID,
+                f"❌ *MANUAL PAYMENT REJECTED*\n━━━━━━━━━━━━━━━━\n👤 User: `{telegram_user_id}`\n📦 Plan: `{claim.get('plan_id')}`\n💰 Amount: ₹{claim.get('amount')}\n🧾 TX: `{tx_code}`\n🛠 By: `{admin_id or ADMIN_ID}`",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Admin channel reject log failed: {e}")
+
+        return True, "Payment rejected"
+    except Exception as e:
+        print(f"Manual reject error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e)
+
 def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number=None):
     """Send static QR image + fixed amount details. Admin verifies manually."""
     plan = get_plan_config(plan_id)
     if not plan:
         bot.send_message(chat_id, "❌ Invalid plan selected.", reply_markup=main_menu_markup(user_id))
         return
+
+    now_ts = time.time()
+    last_ts = payment_session_cooldown.get(user_id, 0)
+    remaining = int(PAYMENT_SESSION_COOLDOWN_SECONDS - (now_ts - last_ts))
+    if remaining > 0:
+        bot.send_message(chat_id, f"⏳ *QR already generated recently!*\n\nPlease wait `{remaining}` seconds before creating another payment session.", reply_markup=main_menu_markup(user_id), parse_mode="Markdown")
+        return
+    payment_session_cooldown[user_id] = now_ts
 
     tx_code = create_manual_payment_claim(plan_id, user_id, username, protected_number)
     if not tx_code:
@@ -1047,7 +1154,7 @@ def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number
 
     try:
         admin_markup = InlineKeyboardMarkup()
-        admin_markup.add(InlineKeyboardButton("✅ VERIFY PAYMENT", callback_data=f"adminverify_{tx_code}"))
+        admin_markup.add(InlineKeyboardButton("✅ VERIFY PAYMENT", callback_data=f"adminverify_{tx_code}"), InlineKeyboardButton("❌ REJECT", callback_data=f"adminreject_{tx_code}"))
         bot.send_message(
             ADMIN_CHANNEL_ID,
             f"💳 *MANUAL QR PAYMENT CREATED*\n━━━━━━━━━━━━━━━━\n👤 User: `{user_id}`\n@ Username: @{username}\n📦 Plan: `{plan_id}`\n💰 Amount: ₹{plan['amount']}\n🧾 TX: `{tx_code}`\n\nVerify after checking screenshot/payment:\n`/verify {tx_code}`",
@@ -1937,6 +2044,31 @@ def process_protect_number(message, plan_id, amount):
         update_user_credits(user_id, credits)
         bot.reply_to(message, "❌ Protection failed. Credits refunded. Contact admin.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
 
+
+
+def show_bot_booking(message):
+    booking_msg = f"""
+🤖 *CUSTOM BOT BOOKING*
+━━━━━━━━━━━━━━━━━━
+
+💰 *Bot setup add-on:* ₹399
+📆 *API charges:* Monthly, separate as per API provider
+🔧 *Future updates:* ₹399 per update/change
+⏰ *Delivery:* 24–48 hours after payment + clear requirements
+
+✅ You can book bots for legal/public-data workflows, automation, payment system, admin panel, website+bot integration, alerts, reports, and similar tools.
+
+⚠️ I will not build bots meant for private personal-data lookup, Aadhaar/PAN misuse, doxxing, or unauthorized data access.
+
+👇 Tap below to create booking payment session.
+{footer()}
+"""
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton("💳 BOOK BOT - PAY ₹399", callback_data="booking_pay"))
+    markup.add(InlineKeyboardButton("👨‍💻 CONTACT ADMIN", url="https://t.me/gaurav_beniwal_0001"))
+    markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
+    bot.send_message(message.chat.id, booking_msg, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
+
 # ==================== BOT HANDLERS ====================
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -2024,7 +2156,7 @@ def payment_screenshot_handler(message):
     tx_code = state.get("tx_code")
     caption = f"📸 *PAYMENT SCREENSHOT RECEIVED*\n━━━━━━━━━━━━━━━━\n👤 User: `{user_id}`\n@ Username: @{message.from_user.username or 'no_username'}\n🧾 TX: `{tx_code}`\n\nVerify only after checking payment:\n`/verify {tx_code}`"
     admin_markup = InlineKeyboardMarkup()
-    admin_markup.add(InlineKeyboardButton("✅ VERIFY PAYMENT", callback_data=f"adminverify_{tx_code}"))
+    admin_markup.add(InlineKeyboardButton("✅ VERIFY PAYMENT", callback_data=f"adminverify_{tx_code}"), InlineKeyboardButton("❌ REJECT", callback_data=f"adminreject_{tx_code}"))
 
     try:
         bot.forward_message(ADMIN_CHANNEL_ID, message.chat.id, message.message_id)
@@ -2061,6 +2193,22 @@ def callback_handler(call):
     
     if user and user.get('is_banned'):
         bot.answer_callback_query(call.id, "You are banned!", show_alert=True)
+        return
+
+    if call.data == "check_join":
+        if is_channel_member(user_id):
+            bot.answer_callback_query(call.id, "Joined verified ✅")
+            try:
+                bot.edit_message_text("✅ *Joined verified!*\n\nUse /start to open bot menu.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode="Markdown")
+            except Exception:
+                bot.send_message(call.message.chat.id, "✅ Joined verified! Use /start")
+        else:
+            bot.answer_callback_query(call.id, "Please join channel first", show_alert=True)
+        return
+
+    if not is_channel_member(user_id):
+        bot.answer_callback_query(call.id, "Join channel first", show_alert=True)
+        send_join_required(call.message.chat.id)
         return
     
     if call.data == "main_menu":
@@ -2134,6 +2282,12 @@ def callback_handler(call):
     elif call.data == "buy":
         show_credit_packs(call.message, user_id)
         bot.answer_callback_query(call.id)
+    elif call.data == "book_bot":
+        show_bot_booking(call.message)
+        bot.answer_callback_query(call.id)
+    elif call.data == "booking_pay":
+        bot.answer_callback_query(call.id, "Creating booking QR... ✅")
+        send_manual_qr_payment(call.message.chat.id, user_id, call.from_user.username or "no_username", "bot_booking")
     elif call.data.startswith("submitproof_"):
         tx_code = call.data.replace("submitproof_", "", 1)
         user_states[user_id] = {"state": "awaiting_payment_screenshot", "tx_code": tx_code}
@@ -2148,6 +2302,17 @@ def callback_handler(call):
         bot.answer_callback_query(call.id, "Verified" if ok else msg, show_alert=not ok)
         try:
             bot.send_message(call.message.chat.id, f"{'✅' if ok else '❌'} {msg}")
+        except Exception:
+            pass
+    elif call.data.startswith("adminreject_"):
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "Unauthorized!", show_alert=True)
+            return
+        tx_code = call.data.replace("adminreject_", "", 1)
+        ok, msg = manual_reject_payment(tx_code, user_id)
+        bot.answer_callback_query(call.id, "Rejected" if ok else msg, show_alert=not ok)
+        try:
+            bot.send_message(call.message.chat.id, f"{'❌' if ok else '⚠️'} {msg}")
         except Exception:
             pass
     elif call.data.startswith("plan_"):
@@ -2234,7 +2399,7 @@ def callback_handler(call):
             return
         if call.data == "admin_add":
             user_states[user_id] = "admin_add"
-            msg = bot.send_message(call.message.chat.id, "➕ *ADD CREDITS*\n\nFormat: `user_id credits`\nExample: `123456789 50`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            msg = bot.send_message(call.message.chat.id, "➕ *ADD CREDITS / UNLIMITED*\n\nCredits format:\n`user_id credits`\nExample: `123456789 50`\n\nUnlimited format:\n`user_id u1h` / `user_id u1d` / `user_id u1w` / `user_id u1m`\nExample: `123456789 u1d`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
             bot.register_next_step_handler(msg, process_admin_add)
         elif call.data == "admin_remove":
             user_states[user_id] = "admin_remove"
@@ -2284,7 +2449,7 @@ def show_admin_panel(message):
     """
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("➕ ADD CREDITS", callback_data="admin_add"),
+        InlineKeyboardButton("➕ ADD CREDITS/PLAN", callback_data="admin_add"),
         InlineKeyboardButton("➖ REMOVE CREDITS", callback_data="admin_remove")
     )
     markup.add(
@@ -2357,16 +2522,47 @@ def process_admin_add(message):
         return
     try:
         parts = message.text.split()
+        if len(parts) < 2:
+            raise ValueError("Missing values")
         target_user = int(parts[0])
-        credits = int(parts[1])
+        value = parts[1].strip().lower()
+
+        if value in ["u1h", "u1d", "u1w", "u1m"]:
+            plan = get_plan_config(value)
+            minutes = int(plan.get("unlimited_minutes") or 0)
+            now_dt = datetime.now(timezone.utc)
+            user = get_user(target_user)
+            start_from = now_dt
+            current_expiry = user.get("unlimited_expiry") if user else None
+            if current_expiry:
+                try:
+                    expiry_dt = datetime.fromisoformat(str(current_expiry).replace("Z", "+00:00"))
+                    if expiry_dt > now_dt:
+                        start_from = expiry_dt
+                except Exception:
+                    pass
+            new_expiry = start_from + timedelta(minutes=minutes)
+            supabase.table("telegram_users").update({
+                "unlimited_expiry": new_expiry.isoformat(),
+                "updated_at": now_dt.isoformat()
+            }).eq("telegram_user_id", target_user).execute()
+            label = plan.get("label", value)
+            bot.reply_to(message, f"✅ Added `{label}` to `{target_user}`\nExpires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`", parse_mode='Markdown')
+            try:
+                bot.send_message(target_user, f"🚀 *Unlimited Plan Added!*\nPlan: `{label}`\nExpires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`", parse_mode='Markdown')
+            except Exception:
+                pass
+            return
+
+        credits = int(value)
         new_total = add_credits(target_user, credits)
         bot.reply_to(message, f"✅ Added {credits} credits to `{target_user}`\nNew total: `{new_total}`", parse_mode='Markdown')
         try:
             bot.send_message(target_user, f"✅ *{credits} credits added!*\nNew total: `{new_total}`", parse_mode='Markdown')
         except:
             pass
-    except:
-        bot.reply_to(message, "❌ Invalid format! Use: `user_id credits`", parse_mode='Markdown')
+    except Exception:
+        bot.reply_to(message, "❌ Invalid format!\nCredits: `user_id credits`\nUnlimited: `user_id u1h/u1d/u1w/u1m`", parse_mode='Markdown')
 
 def process_admin_remove(message):
     user_id = message.from_user.id
@@ -2548,6 +2744,23 @@ def verify_command(message):
         else:
             bot.reply_to(message, f"❌ {msg}")
 
+    except Exception as e:
+        bot.reply_to(message, f"Error: {e}")
+
+
+@bot.message_handler(commands=['reject'])
+def reject_command(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 2:
+            bot.reply_to(message, "Usage: /reject TXCODE optional_reason")
+            return
+        tx_code = parts[1].strip()
+        reason = parts[2].strip() if len(parts) > 2 else "Payment not confirmed"
+        ok, msg = manual_reject_payment(tx_code, message.from_user.id, reason)
+        bot.reply_to(message, f"{'✅' if ok else '❌'} {msg}")
     except Exception as e:
         bot.reply_to(message, f"Error: {e}")
 
