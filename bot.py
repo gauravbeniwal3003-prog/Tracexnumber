@@ -33,13 +33,10 @@ LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/api/v1/
 LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "TVB_SGL_053B3AA6")
 LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number")
 
-# Hardcoded Vehicle Lookup API Configuration
-VEHICLE_LOOKUP_API_URL = "https://techvishalboss.com/api/v1/lookup.php"
-VEHICLE_LOOKUP_API_KEY = "TVB_SGL_15A5F652"
-VEHICLE_LOOKUP_API_SERVICE = "vehicle"
 
 NUMBER_LOOKUP_COST = 2
-VEHICLE_LOOKUP_COST = 10
+MAX_LOOKUP_RESULTS = 20
+TELEGRAM_SAFE_LIMIT = 3900
 PROTECT_NUMBER_COST = 50
 
 COOLDOWN_SECONDS = 3
@@ -64,6 +61,50 @@ def safe_json_response(response):
         return response.json()
     except Exception:
         raise ValueError("Invalid API JSON response")
+
+def split_long_text(text, limit=TELEGRAM_SAFE_LIMIT):
+    """Split long Telegram text safely by lines to avoid the 4096 character limit."""
+    text = str(text or "")
+    chunks = []
+    current = ""
+    for line in text.splitlines(keepends=True):
+        if len(current) + len(line) > limit and current:
+            chunks.append(current.rstrip())
+            current = line
+        else:
+            current += line
+    if current.strip():
+        chunks.append(current.rstrip())
+    return chunks or [""]
+
+def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, parse_mode="Markdown"):
+    """Edit the loading message for short output; split and send extra messages for large output."""
+    chunks = split_long_text(text)
+    sent_messages = []
+    for idx, chunk in enumerate(chunks):
+        is_first = idx == 0
+        is_last = idx == len(chunks) - 1
+        markup = reply_markup if is_last else None
+        try:
+            if is_first:
+                sent_messages.append(bot.edit_message_text(chunk, chat_id, message_id, reply_markup=markup, parse_mode=parse_mode))
+            else:
+                sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, parse_mode=parse_mode, disable_web_page_preview=True))
+        except Exception as send_error:
+            print(f"Long message send error: {send_error}")
+            if is_first:
+                sent_messages.append(bot.edit_message_text(chunk, chat_id, message_id, reply_markup=markup))
+            else:
+                sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, disable_web_page_preview=True))
+    return sent_messages
+
+def auto_delete_sent_messages(chat_id, sent_messages):
+    time.sleep(AUTO_DELETE_SECONDS)
+    for msg in sent_messages:
+        try:
+            bot.delete_message(chat_id, msg.message_id)
+        except Exception:
+            pass
 
 # Manual QR Plan Configuration
 PLAN_CONFIG = {
@@ -188,10 +229,7 @@ def send_join_required(chat_id):
 
 def main_menu_markup(current_user_id=None):
     markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("📱 NUMBER LOOKUP", callback_data="lookup"),
-        InlineKeyboardButton("🚗 VEHICLE LOOKUP", callback_data="vehicle_lookup")
-    )
+    markup.add(InlineKeyboardButton("📱 NUMBER LOOKUP", callback_data="lookup"))
     markup.add(
         InlineKeyboardButton("💎 MY CREDITS", callback_data="credits"),
         InlineKeyboardButton("🤖 BOOK A BOT", callback_data="book_bot")
@@ -1196,7 +1234,6 @@ def record_search_for_daily_report(user_id, username, first_name, query_value, f
                 "first_name": first_name or "User",
                 "searches": 0,
                 "number_searches": 0,
-                "vehicle_searches": 0,
                 "credits_used": 0,
                 "found": 0,
                 "not_found": 0,
@@ -1205,10 +1242,7 @@ def record_search_for_daily_report(user_id, username, first_name, query_value, f
             row["searches"] += 1
             row["last_query"] = query_value
             row["credits_used"] += int(credits_used or 0)
-            if lookup_type == "vehicle":
-                row["vehicle_searches"] += 1
-            else:
-                row["number_searches"] += 1
+            row["number_searches"] += 1
             if found:
                 row["found"] += 1
             else:
@@ -1222,7 +1256,6 @@ def build_daily_report_text(stats_snapshot):
     found = sum(v.get("found", 0) for v in stats_snapshot.values())
     not_found = sum(v.get("not_found", 0) for v in stats_snapshot.values())
     number_searches = sum(v.get("number_searches", 0) for v in stats_snapshot.values())
-    vehicle_searches = sum(v.get("vehicle_searches", 0) for v in stats_snapshot.values())
     credits_used = sum(v.get("credits_used", 0) for v in stats_snapshot.values())
     top = sorted(stats_snapshot.values(), key=lambda x: x.get("searches", 0), reverse=True)[:10]
 
@@ -1233,7 +1266,6 @@ def build_daily_report_text(stats_snapshot):
         f"👥 Users Searched: `{total_users}`",
         f"🔍 Total Lookups: `{total_searches}`",
         f"📱 Number Lookups: `{number_searches}`",
-        f"🚗 Vehicle Lookups: `{vehicle_searches}`",
         f"💎 Credits Used: `{credits_used}`",
         f"✅ Found: `{found}`",
         f"❌ No Data: `{not_found}`",
@@ -1246,7 +1278,7 @@ def build_daily_report_text(stats_snapshot):
         for i, row in enumerate(top, 1):
             uname = row.get("username") or "no_username"
             display = f"@{uname}" if uname != "no_username" else row.get("first_name", "User")
-            lines.append(f"{i}. {display} | ID `{row.get('user_id')}` | `{row.get('searches', 0)}` lookups | 📱 `{row.get('number_searches', 0)}` 🚗 `{row.get('vehicle_searches', 0)}` | 💎 `{row.get('credits_used', 0)}`")
+            lines.append(f"{i}. {display} | ID `{row.get('user_id')}` | `{row.get('searches', 0)}` lookups | 📱 `{row.get('number_searches', 0)}` | 💎 `{row.get('credits_used', 0)}`")
     lines.append("━━━━━━━━━━━━━━━━")
     return "\n".join(lines)
 
@@ -1270,7 +1302,7 @@ def send_daily_search_report_loop():
 
 # ==================== RESULT FORMATTING ====================
 def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format API/cache result. Supports API format with results -> Result 1..16 and old cache direct Result keys."""
+    """Format API/cache result. Supports API format with results -> Result 1..20 and old cache direct Result keys."""
     if not isinstance(result, dict):
         result = {}
 
@@ -1303,12 +1335,16 @@ def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimit
     # Some APIs return one direct object.
     if not parsed_results and ('name' in result or 'mobile' in result):
         parsed_results = [result]
+
+    total_results_found = len(parsed_results)
+    parsed_results = parsed_results[:MAX_LOOKUP_RESULTS]
+    showing_text = f"\n📌 Showing: `{len(parsed_results)}` / `{total_results_found}`" if total_results_found > MAX_LOOKUP_RESULTS else ""
     
     output = f"""
 🔍 *NUMBER LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━
 
-📊 Total Results Found: `{len(parsed_results)}`
+📊 Total Results Found: `{total_results_found}`{showing_text}
 """
     
     first_name = "Unknown"
@@ -1381,249 +1417,6 @@ Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
     
     return output, first_name
 
-
-# ==================== VEHICLE LOOKUP FORMATTING ====================
-def clean_value(value):
-    if value is None:
-        return "N/A"
-    if isinstance(value, bool):
-        return "Yes" if value else "No"
-    value = str(value).strip()
-    if value == "" or value.lower() in ["na", "n/a", "null", "none", "not available"]:
-        return "N/A"
-    return value
-
-def flatten_dict_values(obj):
-    vals = []
-    if isinstance(obj, dict):
-        for v in obj.values():
-            vals.extend(flatten_dict_values(v))
-    elif isinstance(obj, list):
-        for v in obj:
-            vals.extend(flatten_dict_values(v))
-    else:
-        vals.append(obj)
-    return vals
-
-def vehicle_data_available(data):
-    if not isinstance(data, dict):
-        return False
-    useful_sections = ["owner_details", "vehicle_info", "registration_details", "insurance_and_pucc", "system_codes"]
-    vals = []
-    for section in useful_sections:
-        vals.extend(flatten_dict_values(data.get(section, {})))
-    for v in vals:
-        cv = clean_value(v)
-        if cv not in ["N/A", "No", "0"]:
-            return True
-    return False
-
-def format_vehicle_lookup_result(result, rc_number, user_id, unlimited_active=False, unlimited_expiry=None):
-    if not isinstance(result, dict):
-        result = {}
-    data = result.get("data") if isinstance(result.get("data"), dict) else {}
-    owner = data.get("owner_details", {}) if isinstance(data.get("owner_details"), dict) else {}
-    vehicle = data.get("vehicle_info", {}) if isinstance(data.get("vehicle_info"), dict) else {}
-    reg = data.get("registration_details", {}) if isinstance(data.get("registration_details"), dict) else {}
-    ins = data.get("insurance_and_pucc", {}) if isinstance(data.get("insurance_and_pucc"), dict) else {}
-    codes = data.get("system_codes", {}) if isinstance(data.get("system_codes"), dict) else {}
-
-    output = f"""
-🚗 *VEHICLE LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━
-
-🔢 RC Number: `{clean_value(vehicle.get('registration_number') or rc_number)}`
-
-👤 *OWNER DETAILS*
-━━━━━━━━━━━━━━━━━━
-👤 Owner Name: `{clean_value(owner.get('owner_name'))}`
-👨 Father Name: `{clean_value(owner.get('father_name'))}`
-🏠 Present Address: `{clean_value(owner.get('present_address'))}`
-🏡 Permanent Address: `{clean_value(owner.get('permanent_address'))}`
-
-🚘 *VEHICLE INFO*
-━━━━━━━━━━━━━━━━━━
-🏭 Maker: `{clean_value(vehicle.get('maker'))}`
-🚗 Model: `{clean_value(vehicle.get('model'))}`
-🔖 Variant: `{clean_value(vehicle.get('variant'))}`
-🏷️ Class: `{clean_value(vehicle.get('vehicle_class'))}`
-🚙 Type: `{clean_value(vehicle.get('vehicle_type'))}`
-⛽ Fuel: `{clean_value(vehicle.get('fuel_type'))}`
-🔧 Engine No: `{clean_value(vehicle.get('engine_number'))}`
-🧱 Chassis No: `{clean_value(vehicle.get('chassis_number'))}`
-⚙️ CC: `{clean_value(vehicle.get('cubic_capacity'))}`
-💺 Seat Capacity: `{clean_value(vehicle.get('seat_capacity'))}`
-🏢 Commercial: `{clean_value(vehicle.get('is_commercial'))}`
-
-📋 *REGISTRATION DETAILS*
-━━━━━━━━━━━━━━━━━━
-📅 Registration Date: `{clean_value(reg.get('registration_date'))}`
-🏭 Manufacturing Date: `{clean_value(reg.get('manufacturing_date'))}`
-🏢 RTO Code: `{clean_value(reg.get('rto_code'))}`
-📍 RTO Name: `{clean_value(reg.get('rto_name'))}`
-🌐 State: `{clean_value(reg.get('state'))}`
-💰 Financer: `{clean_value(reg.get('financer'))}`
-
-🧾 *INSURANCE & PUCC*
-━━━━━━━━━━━━━━━━━━
-🏦 Insurance Company: `{clean_value(ins.get('insurance_company'))}`
-📄 Policy No: `{clean_value(ins.get('policy_number'))}`
-⏰ Insurance Valid Upto: `{clean_value(ins.get('insurance_valid_upto'))}`
-⚠️ Insurance Expired: `{clean_value(ins.get('insurance_expired'))}`
-🌫️ PUCC No: `{clean_value(ins.get('pucc_number'))}`
-⏰ PUCC Valid Upto: `{clean_value(ins.get('pucc_valid_upto'))}`
-
-🧩 *SYSTEM CODES*
-━━━━━━━━━━━━━━━━━━
-🆔 Data ID: `{clean_value(codes.get('data_id'))}`
-🏢 RTO ID: `{clean_value(codes.get('rto_id'))}`
-🏭 Manufacturer ID: `{clean_value(codes.get('manufacturer_id'))}`
-🚗 Vehicle ID: `{clean_value(codes.get('vehicle_id'))}`
-🔖 Variant ID: `{clean_value(codes.get('variant_id'))}`
-⛽ Fuel ID: `{clean_value(codes.get('fuel_id'))}`
-🔗 Combine ID: `{clean_value(codes.get('combine_id'))}`
-📊 Order By: `{clean_value(codes.get('order_by'))}`
-✅ Active: `{clean_value(codes.get('is_active'))}`
-"""
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    if unlimited_active:
-        output += f"""
-━━━━━━━━━━━━━━━━━━
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{str(unlimited_expiry)[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-━━━━━━━━━━━━━━━━━━
-💎 *Credits Used:* `{VEHICLE_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    output += f"""
-
-⚠️ Auto delete in {AUTO_DELETE_SECONDS} sec
-{footer()}
-"""
-    return output
-
-def process_vehicle_lookup(message):
-    user_id = message.from_user.id
-    rc_number = str(message.text or "").strip().upper().replace(" ", "").replace("-", "")
-
-    if user_id in user_states:
-        del user_states[user_id]
-
-    if rc_number == "/CANCEL":
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
-        return
-
-    # Accept all vehicle number inputs without fixed RC pattern restriction.
-    # Only clean spaces, hyphens, symbols, and lowercase before sending to API.
-    rc_number = re.sub(r'[^A-Z0-9]', '', rc_number)
-
-    if not rc_number:
-        bot.reply_to(
-            message,
-            "❌ *Invalid vehicle number!*\n\nPlease enter a vehicle number.",
-            reply_markup=main_menu_markup(user_id),
-            parse_mode='Markdown'
-        )
-        return
-
-    if user_id in user_cooldown and time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
-        wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-        bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
-        return
-
-    user = get_user(user_id)
-    total_credits = get_total_credits(user_id)
-
-    unlimited_active = False
-    unlimited_expiry = None
-    unlimited_expiry_raw = user.get('unlimited_expiry') if user else None
-    if unlimited_expiry_raw:
-        try:
-            expiry_date = datetime.fromisoformat(str(unlimited_expiry_raw).replace('Z', '+00:00'))
-            if expiry_date > datetime.now(timezone.utc):
-                unlimited_active = True
-                unlimited_expiry = unlimited_expiry_raw
-        except Exception:
-            pass
-
-    if total_credits < VEHICLE_LOOKUP_COST and not unlimited_active:
-        markup = universal_markup(buy=True, join=True, admin=True)
-        bot.reply_to(message, f"❌ *Not enough credits!*\n\n🚗 Vehicle Lookup costs `{VEHICLE_LOOKUP_COST}` credits.\n💎 Your credits: `{total_credits}`", reply_markup=markup, parse_mode='Markdown')
-        return
-
-    user_cooldown[user_id] = time.time()
-    loading_msg = bot.reply_to(message, "🚗 *Searching vehicle details...*", parse_mode='Markdown')
-    try:
-        time.sleep(1)
-        bot.edit_message_text("🚗 *Searching vehicle details..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        time.sleep(1)
-        bot.edit_message_text("🚗 *Searching vehicle details...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    except Exception:
-        pass
-
-    try:
-        url = f"{VEHICLE_LOOKUP_API_URL}?key={VEHICLE_LOOKUP_API_KEY}&service={VEHICLE_LOOKUP_API_SERVICE}&rc={rc_number}"
-        r = requests.get(url, timeout=20)
-        result = safe_json_response(r)
-    except Exception as e:
-        print(f"Vehicle lookup API error: {e}")
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle")
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, rc_number, found=False, lookup_type="vehicle", credits_used=0)
-        return
-
-    data = result.get("data") if isinstance(result, dict) else None
-    if not (isinstance(result, dict) and result.get("status") is True and isinstance(data, dict) and vehicle_data_available(data)):
-        output = f"""
-❌ *DATA NOT AVAILABLE*
-━━━━━━━━━━━━━━━━━━
-
-🚗 Vehicle Number
-`{rc_number}`
-
-🚫 No valid vehicle record found for this RC number.
-
-💡 Tips:
-• Check vehicle number again
-• Use format like `MH01AB1234`
-• Try without spaces or hyphen
-
-━━━━━━━━━━━━━━━━━━
-💎 Credits NOT deducted
-{footer()}
-"""
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, rc_number, found=False, lookup_type="vehicle", credits_used=0)
-        return
-
-    if not unlimited_active:
-        if not deduct_credits(user_id, VEHICLE_LOOKUP_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-            return
-
-    increment_total_searches(user_id)
-    output = format_vehicle_lookup_result(result, rc_number, user_id, unlimited_active, unlimited_expiry)
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("🚗 NEW VEHICLE SEARCH", callback_data="vehicle_lookup"),
-        InlineKeyboardButton("🏠 MENU", callback_data="main_menu")
-    )
-    markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
-    sent_msg = bot.edit_message_text(output, message.chat.id, loading_msg.message_id, reply_markup=markup, parse_mode='Markdown')
-    record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, rc_number, found=True, lookup_type="vehicle", credits_used=VEHICLE_LOOKUP_COST if not unlimited_active else 0)
-
-    def auto_delete():
-        time.sleep(AUTO_DELETE_SECONDS)
-        try:
-            bot.delete_message(message.chat.id, sent_msg.message_id)
-        except Exception:
-            pass
-
-    threading.Thread(target=auto_delete, daemon=True).start()
 
 # ==================== LOOKUP PROCESS ====================
 def process_lookup(message):
@@ -1716,18 +1509,11 @@ You can also protect your number for 50 credits!
         )
         markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
         
-        sent_msg = bot.edit_message_text(output, message.chat.id, loading_msg.message_id, reply_markup=markup, parse_mode='Markdown')
+        sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
         
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
         
-        def auto_delete():
-            time.sleep(AUTO_DELETE_SECONDS)
-            try:
-                bot.delete_message(message.chat.id, sent_msg.message_id)
-            except:
-                pass
-        
-        threading.Thread(target=auto_delete, daemon=True).start()
+        threading.Thread(target=auto_delete_sent_messages, args=(message.chat.id, sent_messages), daemon=True).start()
         return
     
     try:
@@ -1758,18 +1544,11 @@ You can also protect your number for 50 credits!
         )
         markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
         
-        sent_msg = bot.edit_message_text(output, message.chat.id, loading_msg.message_id, reply_markup=markup, parse_mode='Markdown')
+        sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
         
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
         
-        def auto_delete():
-            time.sleep(AUTO_DELETE_SECONDS)
-            try:
-                bot.delete_message(message.chat.id, sent_msg.message_id)
-            except:
-                pass
-        
-        threading.Thread(target=auto_delete, daemon=True).start()
+        threading.Thread(target=auto_delete_sent_messages, args=(message.chat.id, sent_messages), daemon=True).start()
         
     else:
         output = f"""
@@ -2150,7 +1929,6 @@ def start(message):
 ━━━━━━━━━━━━━━━━
 🎯 *FEATURES*
 • Instant Number Lookup
-• Vehicle RC Lookup
 • Fast Response
 • Secure Credits System
 • Unlimited Plans Available
@@ -2260,11 +2038,6 @@ def callback_handler(call):
         user_states[user_id] = "awaiting_number"
         msg = bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `2 credits` per successful search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
         bot.register_next_step_handler(msg, process_lookup)
-        bot.answer_callback_query(call.id)
-    elif call.data == "vehicle_lookup":
-        user_states[user_id] = "awaiting_vehicle_number"
-        msg = bot.send_message(call.message.chat.id, "🚗 *Enter Vehicle Number:*\n\n`Example: MH01AB1234`\n\n💎 Cost: `10 credits` per successful search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
-        bot.register_next_step_handler(msg, process_vehicle_lookup)
         bot.answer_callback_query(call.id)
     elif call.data == "protect":
         user_states[user_id] = "awaiting_protect_number"
@@ -2379,15 +2152,14 @@ def callback_handler(call):
         help_msg = f"""
 📖 *HOW TO USE TRACEX*
 ━━━━━━━━━━━━━━━━━━
-1️⃣ Click NUMBER LOOKUP or VEHICLE LOOKUP
-2️⃣ Enter mobile number or RC number
+1️⃣ Click NUMBER LOOKUP
+2️⃣ Enter mobile number
 3️⃣ Get instant results
 ━━━━━━━━━━━━━━━━━━
 💎 *CREDIT SYSTEM*
 • New User: `3` free credits
 • Credits never expire
 • Number Lookup: 2 credits
-• Vehicle Lookup: 10 credits
 • Unlimited plans available
 • Protected numbers cost 50 credits
 ━━━━━━━━━━━━━━━━━━
@@ -2398,7 +2170,6 @@ def callback_handler(call):
 ━━━━━━━━━━━━━━━━━━
 ⚡ FEATURES
 ✅ Fast Number Lookup
-✅ Vehicle RC Lookup
 ✅ Unlimited Plans
 ✅ Number Protection
 ✅ Secure Payments
