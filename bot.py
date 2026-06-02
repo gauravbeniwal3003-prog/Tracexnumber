@@ -29,9 +29,9 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@gaurav_beniwal_0001")
 BOT_VERSION = "5.8.0"
 
 # Lookup API Configuration
-LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/api/v1/lookup.php")
-LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "TVB_SGL_053B3AA6")
-LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number")
+LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/api/v1/lookup.php").strip()
+LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "TVB_SGL_053B3AA6").strip()
+LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number").strip()
 
 
 NUMBER_LOOKUP_COST = 10
@@ -72,6 +72,110 @@ def safe_json_response(response):
         return response.json()
     except Exception:
         raise ValueError("Invalid API JSON response")
+
+
+def has_valid_number_results(result):
+    """True only when API/cache has at least one usable number result."""
+    if not isinstance(result, dict):
+        return False
+    api_results = result.get("results")
+    if isinstance(api_results, dict):
+        return any(isinstance(v, dict) for v in api_results.values())
+    if isinstance(api_results, list):
+        return any(isinstance(v, dict) for v in api_results)
+    return any(str(k).lower().startswith("result") and isinstance(v, dict) for k, v in result.items()) or ("name" in result or "mobile" in result)
+
+def call_unstable_json_api(params, lookup_type="number", max_retries=5, timeout=30):
+    """
+    Smart API caller for Cloudflare/unstable APIs.
+    Fixes random 502 HTML responses by retrying before showing API Error.
+    Returns: (data, error_reason)
+    """
+    base_url = str(LOOKUP_API_URL or "").strip()
+    clean_params = {str(k): str(v).strip() for k, v in (params or {}).items() if v is not None}
+
+    headers_attempts = [
+        {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/5.8",
+            "Accept": "application/json,text/plain,*/*",
+            "Connection": "close",
+        },
+        {
+            "User-Agent": "python-requests TraceXBot/5.8",
+            "Accept": "application/json,text/plain,*/*",
+            "Connection": "close",
+        },
+    ]
+
+    last_error = "unknown"
+    for attempt in range(1, int(max_retries or 5) + 1):
+        headers = headers_attempts[(attempt - 1) % len(headers_attempts)]
+        try:
+            response = requests.get(base_url, params=clean_params, headers=headers, timeout=timeout)
+            content_type = str(response.headers.get("content-type", "")).lower()
+            raw_preview = (response.text or "")[:500].replace("\n", " ")
+
+            print(f"[{lookup_type.upper()} API] Try {attempt}/{max_retries} | HTTP {response.status_code} | CT={content_type}")
+            print(f"[{lookup_type.upper()} API] URL: {response.url}")
+            print(f"[{lookup_type.upper()} API] RAW: {raw_preview}")
+
+            # Cloudflare/provider sometimes returns 502 HTML. Retry these.
+            if response.status_code in (429, 500, 502, 503, 504, 520, 521, 522, 523, 524):
+                last_error = f"temporary_http_{response.status_code}"
+                time.sleep(min(2 * attempt, 8))
+                continue
+
+            if response.status_code != 200:
+                last_error = f"http_{response.status_code}"
+                time.sleep(min(2 * attempt, 8))
+                continue
+
+            # Try JSON even if content-type is wrong, but reject HTML/block pages.
+            if raw_preview.lstrip().lower().startswith("<!doctype") or "<html" in raw_preview.lower():
+                last_error = "html_non_json_response"
+                time.sleep(min(2 * attempt, 8))
+                continue
+
+            try:
+                data = response.json()
+            except Exception as json_error:
+                last_error = f"json_parse_failed_{json_error}"
+                time.sleep(min(2 * attempt, 8))
+                continue
+
+            if not isinstance(data, dict):
+                last_error = "json_not_object"
+                time.sleep(min(2 * attempt, 8))
+                continue
+
+            return data, None
+
+        except requests.exceptions.Timeout:
+            last_error = "timeout"
+            print(f"[{lookup_type.upper()} API] Timeout on try {attempt}")
+            time.sleep(min(2 * attempt, 8))
+        except requests.exceptions.ConnectionError as conn_error:
+            last_error = f"connection_error_{conn_error}"
+            print(f"[{lookup_type.upper()} API] Connection error on try {attempt}: {conn_error}")
+            time.sleep(min(2 * attempt, 8))
+        except Exception as api_error:
+            last_error = f"exception_{api_error}"
+            print(f"[{lookup_type.upper()} API] Error on try {attempt}: {api_error}")
+            time.sleep(min(2 * attempt, 8))
+
+    print(f"[{lookup_type.upper()} API] FINAL FAILED after {max_retries} tries: {last_error}")
+    return None, last_error
+
+def notify_admin_api_issue(lookup_type, query, error_reason):
+    """Send compact admin-only debug alert without exposing raw provider errors to users."""
+    try:
+        bot.send_message(
+            ADMIN_ID,
+            f"⚠️ *API TEMP ISSUE*\n\nType: `{lookup_type}`\nQuery: `{query}`\nReason: `{str(error_reason)[:500]}`\n\nUser credits were not deducted.",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Admin API issue notify failed: {e}")
 
 def split_long_text(text, limit=TELEGRAM_SAFE_LIMIT):
     """Split long Telegram text safely by lines to avoid the 4096 character limit."""
@@ -1706,18 +1810,21 @@ You can also protect your number for ₹99!
         active_number_sessions.discard(user_id)
         return
     
-    try:
-        url = f"{LOOKUP_API_URL}?key={LOOKUP_API_KEY}&service={LOOKUP_API_SERVICE}&number={phone}"
-        r = requests.get(url, timeout=10)
-        result = safe_json_response(r)
-    except Exception as e:
-        print(f"Number lookup API error: {e}")
+    result, api_error_reason = call_unstable_json_api(
+        {"key": LOOKUP_API_KEY, "service": LOOKUP_API_SERVICE, "number": phone},
+        lookup_type="number",
+        max_retries=5,
+        timeout=30
+    )
+
+    if not result:
         show_api_error(message.chat.id, loading_msg.message_id, lookup_type="number")
+        notify_admin_api_issue("number", phone, api_error_reason)
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
         active_number_sessions.discard(user_id)
         return
 
-    if result and result.get('results'):
+    if has_valid_number_results(result):
         if not unlimited_active:
             if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
                 bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*", 
@@ -1913,16 +2020,24 @@ You can also protect yours for ₹99.
         found = True
         result = cached_result
     else:
-        try:
-            if lookup_type == "telegram":
-                url = f"{LOOKUP_API_URL}?key={TELEGRAM_LOOKUP_API_KEY}&service={TELEGRAM_LOOKUP_SERVICE}&telegram={query}"
-            else:
-                url = f"{LOOKUP_API_URL}?key={VEHICLE_LOOKUP_API_KEY}&service={VEHICLE_LOOKUP_SERVICE}&rc={query}"
-            r = requests.get(url, timeout=15)
-            result = safe_json_response(r)
-        except Exception as e:
-            print(f"{lookup_type} lookup API error: {e}")
+        if lookup_type == "telegram":
+            result, api_error_reason = call_unstable_json_api(
+                {"key": TELEGRAM_LOOKUP_API_KEY, "service": TELEGRAM_LOOKUP_SERVICE, "telegram": query},
+                lookup_type="telegram",
+                max_retries=5,
+                timeout=30
+            )
+        else:
+            result, api_error_reason = call_unstable_json_api(
+                {"key": VEHICLE_LOOKUP_API_KEY, "service": VEHICLE_LOOKUP_SERVICE, "rc": query},
+                lookup_type="vehicle",
+                max_retries=5,
+                timeout=30
+            )
+
+        if not result:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type=lookup_type)
+            notify_admin_api_issue(lookup_type, query, api_error_reason)
             record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query, found=False, lookup_type=lookup_type, credits_used=0)
             return
         if lookup_type == "telegram":
@@ -2894,7 +3009,7 @@ def process_admin_broadcast(message):
     if message.text == "/cancel":
         bot.reply_to(message, "Cancelled", reply_markup=main_menu_markup(user_id))
         return
-    broadcast_text = message.text.strip()
+    broadcast_text = (message.text or message.caption or "").strip()
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("✅ YES, SEND", callback_data="broadcast_confirm"), InlineKeyboardButton("❌ NO, CANCEL", callback_data="cancel"))
     temp_data[user_id] = {'broadcast_text': broadcast_text}
@@ -3068,6 +3183,30 @@ def send_daily_user_motivation_loop():
         except Exception as e:
             print(f"Daily motivation loop error: {e}")
             time.sleep(300)
+
+
+@bot.message_handler(commands=['apitest'])
+def admin_api_test(message):
+    """Admin-only: /apitest 9876787776"""
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = str(message.text or "").split()
+    phone = normalize_indian_mobile(parts[1] if len(parts) > 1 else "")
+    if not phone:
+        bot.reply_to(message, "Usage: /apitest 9876787776")
+        return
+    bot.reply_to(message, "🧪 Testing API with smart retry... check Render logs too.")
+    data, err = call_unstable_json_api(
+        {"key": LOOKUP_API_KEY, "service": LOOKUP_API_SERVICE, "number": phone},
+        lookup_type="apitest",
+        max_retries=5,
+        timeout=30
+    )
+    if data and has_valid_number_results(data):
+        total = len(data.get("results", {})) if isinstance(data.get("results"), dict) else 1
+        bot.reply_to(message, f"✅ API OK after retry system\\nStatus: `{data.get('status')}`\\nResults: `{total}`", parse_mode="Markdown")
+    else:
+        bot.reply_to(message, f"❌ API failed even after retries\\nReason: `{str(err)[:500]}`", parse_mode="Markdown")
 
 # ==================== START BOT ====================
 if __name__ == "__main__":
