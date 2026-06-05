@@ -137,7 +137,7 @@ Client = _SupabaseLiteClient
 BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
-ADMIN_USERNAME = "@gaurav_beniwal_0001"
+ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
 BOT_VERSION = "5.9.0"
 
 # Lookup API Configuration
@@ -342,7 +342,6 @@ PLAN_CONFIG = {
     "u1m": {"amount": 898, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited"},
     "protect_number": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Number Protection"},
     "protect_telegram": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_telegram", "label": "Telegram Number Protection"},
-    "protect_vehicle": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_vehicle", "label": "Vehicle Number Protection"},
     "bot_booking": {"amount": 399, "credits": 0, "unlimited_minutes": 0, "payment_for": "bot_booking", "label": "Custom Bot Booking Add-on"},
 }
 
@@ -487,9 +486,10 @@ def send_join_required(chat_id):
 
 def main_menu_markup(current_user_id=None):
     markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(InlineKeyboardButton("📱 NUMBER LOOKUP", callback_data="lookup"))
-    markup.add(InlineKeyboardButton("💬 TELEGRAM LOOKUP", callback_data="telegram_lookup"))
-    markup.add(InlineKeyboardButton("🚘 VEHICLE LOOKUP", callback_data="vehicle_lookup"))
+    markup.add(
+        InlineKeyboardButton("📱 NUMBER LOOKUP", callback_data="lookup"),
+        InlineKeyboardButton("💬 TELEGRAM LOOKUP", callback_data="telegram_lookup")
+    )
     markup.add(
         InlineKeyboardButton("💎 MY CREDITS", callback_data="credits"),
         InlineKeyboardButton("🤖 BOOK A BOT", callback_data="book_bot")
@@ -497,10 +497,6 @@ def main_menu_markup(current_user_id=None):
     markup.add(
         InlineKeyboardButton("🛒 BUY CREDITS", callback_data="buy"),
         InlineKeyboardButton("🛡️ PROTECTION", callback_data="protection_menu")
-    )
-    markup.add(
-        InlineKeyboardButton("👤 PROFILE", callback_data="profile"),
-        InlineKeyboardButton("ℹ️ HELP", callback_data="help")
     )
     if current_user_id == ADMIN_ID:
         markup.add(InlineKeyboardButton("🛠 ADMIN", callback_data="admin"))
@@ -526,8 +522,7 @@ def credit_packs_markup():
         InlineKeyboardButton("🛡️ Number Protection - ₹99", callback_data="plan_protect_number")
     )
     markup.add(
-        InlineKeyboardButton("💬 Telegram Protection - ₹99", callback_data="plan_protect_telegram"),
-        InlineKeyboardButton("🚘 Vehicle Protection - ₹99", callback_data="plan_protect_vehicle")
+        InlineKeyboardButton("💬 Telegram Protection - ₹99", callback_data="plan_protect_telegram")
     )
     markup.add(InlineKeyboardButton("🔙 BACK", callback_data="main_menu"))
     return markup
@@ -679,7 +674,7 @@ def process_telegram_lookup(message):
     
     # Basic validation - username should be alphanumeric with underscore
     if not re.match(r'^@?[a-zA-Z0-9_]{5,32}$', username_input):
-        bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `15 credits` per successful search", 
+        bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `15 credits` per search", 
                     reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
     
@@ -735,8 +730,18 @@ def process_telegram_lookup(message):
             active_telegram_sessions.discard(user_id)
         return
     
-    # Check if no result found
+    # Check if no result found. This is NOT an API error; charge normal search cost.
     if result.get("error") == "no_result" or not result.get("telegram_id"):
+        if not unlimited_active:
+            if not deduct_credits(user_id, TELEGRAM_LOOKUP_COST):
+                bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*",
+                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                with active_telegram_sessions_lock:
+                    active_telegram_sessions.discard(user_id)
+                return
+
+        increment_total_searches(user_id)
+        updated_total = get_total_credits(user_id)
         output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
@@ -751,11 +756,12 @@ def process_telegram_lookup(message):
 • Ensure username is correct
 
 ━━━━━━━━━━━━━━━━━━
-💎 Credits NOT deducted
+💎 *Credits Used:* `{0 if unlimited_active else TELEGRAM_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
 {footer()}
 """
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0)
         with active_telegram_sessions_lock:
             active_telegram_sessions.discard(user_id)
         return
@@ -1525,21 +1531,6 @@ Your Telegram ID is now protected.
 Use /start to continue!
 """, parse_mode='Markdown')
 
-        elif plan_id == "protect_vehicle" and payment_for == "protect_vehicle":
-            protected_vehicle = normalize_vehicle_number(claim.get('protected_number'))
-            if protected_vehicle:
-                add_protected_vehicle(protected_vehicle, telegram_user_id)
-                bot.send_message(telegram_user_id, f"""
-✅ *PAYMENT SUCCESSFUL!*
-
-🛡️ *Vehicle Number Protected!*
-🚘 Vehicle: `{protected_vehicle}`
-
-Your vehicle number is now protected.
-
-Use /start to continue!
-""", parse_mode='Markdown')
-        
         bot.send_message(ADMIN_ID, f"""
 ✅ *PAYMENT SUCCESS*
 
@@ -1658,13 +1649,6 @@ def fulfill_manual_claim(claim):
                 add_protected_telegram(telegram_id, int(telegram_user_id))
             return True, f"Protected Telegram ID {telegram_id}"
 
-        if plan["payment_for"] == "protect_vehicle":
-            vehicle_number = normalize_vehicle_number(claim.get("protected_number"))
-            if not vehicle_number:
-                return False, "Vehicle number missing"
-            if not is_vehicle_protected(vehicle_number):
-                add_protected_vehicle(vehicle_number, int(telegram_user_id))
-            return True, f"Protected vehicle number {vehicle_number}"
 
         if plan["payment_for"] == "bot_booking":
             return True, "Bot booking confirmed. Delivery window: 24 to 48 hours after requirements are clear."
@@ -1802,6 +1786,55 @@ def manual_reject_payment(tx_code, admin_id=None, reason="Payment not confirmed"
         traceback.print_exc()
         return False, str(e)
 
+
+def get_manual_claim_status(tx_code):
+    """Return current manual payment status for a TX code."""
+    try:
+        tx_code = str(tx_code or "").strip()
+        for field in ["session_id", "payment_id", "cashfree_order_id"]:
+            try:
+                resp = supabase.table("payment_claims").select("status").eq(field, tx_code).limit(1).execute()
+                if resp.data:
+                    return str(resp.data[0].get("status") or "").lower()
+            except Exception as e:
+                print(f"Payment status lookup skipped {field}: {e}")
+        return None
+    except Exception as e:
+        print(f"Get payment status error: {e}")
+        return None
+
+def payment_session_reminder_worker(chat_id, user_id, tx_code, plan_label):
+    """Send payment reminders and auto-reject if still pending after 3 minutes."""
+    try:
+        time.sleep(60)
+        if get_manual_claim_status(tx_code) == "pending":
+            bot.send_message(
+                chat_id,
+                f"⏰ *Payment Reminder*\\n\\n🧾 TX: `{tx_code}`\\n\\nAgar payment ho gaya hai to please payment screenshot yahin share karo, taaki admin verify kar sake.",
+                parse_mode="Markdown"
+            )
+
+        time.sleep(60)
+        if get_manual_claim_status(tx_code) == "pending":
+            bot.send_message(
+                chat_id,
+                f"✅ *Don’t worry!*\\n\\n🧾 TX: `{tx_code}`\\n\\nAapka payment safe rahega. Screenshot share karo, plan verify hone ke baad enjoy kar paoge.",
+                parse_mode="Markdown"
+            )
+
+        time.sleep(60)
+        if get_manual_claim_status(tx_code) == "pending":
+            ok, msg = manual_reject_payment(tx_code, ADMIN_ID, reason="Payment screenshot not received within 3 minutes")
+            if ok:
+                bot.send_message(
+                    chat_id,
+                    f"❌ *Payment Session Auto Rejected*\\n\\n🧾 TX: `{tx_code}`\\nReason: `Payment screenshot not received within 3 minutes`\\n\\nNew payment session create karke dobara try kar sakte ho.",
+                    reply_markup=main_menu_markup(user_id),
+                    parse_mode="Markdown"
+                )
+    except Exception as e:
+        print(f"Payment reminder worker error for {tx_code}: {e}")
+
 def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number=None):
     """Send static QR image + fixed amount details. Admin verifies manually."""
     plan = get_plan_config(plan_id)
@@ -1867,6 +1900,11 @@ def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number
         reply_markup=admin_markup,
         parse_mode="Markdown"
     )
+    threading.Thread(
+        target=payment_session_reminder_worker,
+        args=(chat_id, user_id, tx_code, plan.get("label", plan_id)),
+        daemon=True
+    ).start()
 
 # ==================== DAILY SEARCH REPORT ====================
 def record_search_for_daily_report(user_id, username, first_name, query_value, found=True, lookup_type="number", credits_used=0):
@@ -2218,6 +2256,15 @@ You can also protect your number for ₹99!
         active_number_sessions.discard(user_id)
         
     else:
+        if not unlimited_active:
+            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
+                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*",
+                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                active_number_sessions.discard(user_id)
+                return
+
+        increment_total_searches(user_id)
+        updated_total = get_total_credits(user_id)
         output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
@@ -2233,13 +2280,14 @@ You can also protect your number for ₹99!
 • Ensure Indian mobile number
 
 ━━━━━━━━━━━━━━━━━━
-💎 Credits NOT deducted
+💎 *Credits Used:* `{0 if unlimited_active else NUMBER_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
 {footer()}
 """
-        
+
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
+
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
         active_number_sessions.discard(user_id)
 
 def format_vehicle_lookup_result(result, vehicle_number, user_id, unlimited_active=False, unlimited_expiry=None):
@@ -2310,10 +2358,7 @@ def process_vehicle_lookup(message):
 
 🔎 Query: `{query}`
 
-This data is protected by the Vehicle Number Protection Plan.
-Details are hidden.
-
-You can also protect yours for ₹99.
+This data is protected. Details are hidden.
 """, reply_markup=markup, parse_mode='Markdown')
         return
 
@@ -2372,14 +2417,12 @@ def show_protection_menu(message):
 
 📱 Number Protection → ₹99
 💬 Telegram Number Protection → ₹99
-🚘 Vehicle Number Protection → ₹99
 
 Protected data will not be shown in lookup results.
 """
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(InlineKeyboardButton("📱 PROTECT NUMBER - ₹99", callback_data="plan_protect_number"))
     markup.add(InlineKeyboardButton("💬 PROTECT TELEGRAM - ₹99", callback_data="plan_protect_telegram"))
-    markup.add(InlineKeyboardButton("🚘 PROTECT VEHICLE - ₹99", callback_data="plan_protect_vehicle"))
     markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
     bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
 
@@ -2402,14 +2445,6 @@ def process_protection_payment_input(message, plan_id):
             bot.reply_to(message, "❌ *Invalid Telegram ID!*", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
             return
         if is_telegram_protected(value):
-            bot.reply_to(message, f"❌ Already protected: `{value}`", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
-            return
-    elif plan_id == "protect_vehicle":
-        value = normalize_vehicle_number(value)
-        if not is_valid_vehicle_number(value):
-            bot.reply_to(message, "❌ *Invalid vehicle number!*\nExample: `HR60E3838`", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
-            return
-        if is_vehicle_protected(value):
             bot.reply_to(message, f"❌ Already protected: `{value}`", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
             return
     else:
@@ -2591,7 +2626,6 @@ def show_credit_packs(message, user_id):
 🛡️ *PROTECTION*
 • Number Protection → ₹99
 • Telegram Number Protection → ₹99
-• Vehicle Number Protection → ₹99
 
 ━━━━━━━━━━━━━━━━━━
 ✅ Permanent Credits NEVER EXPIRE
@@ -2613,11 +2647,10 @@ def handle_plan_selection(call):
         bot.answer_callback_query(call.id, "Invalid plan selected.", show_alert=True)
         return
 
-    if plan_id in ["protect_number", "protect_telegram", "protect_vehicle"]:
+    if plan_id in ["protect_number", "protect_telegram"]:
         labels = {
             "protect_number": ("📱 *NUMBER PROTECTION*", "Enter the 10-digit mobile number you want to protect:", "`Example: 9876543210`"),
-            "protect_telegram": ("💬 *TELEGRAM NUMBER PROTECTION*", "Enter numeric Telegram user ID:", "`Example: 7850023357`"),
-            "protect_vehicle": ("🚘 *VEHICLE NUMBER PROTECTION*", "Enter vehicle RC number:", "`Example: HR60E3838`")
+            "protect_telegram": ("💬 *TELEGRAM NUMBER PROTECTION*", "Enter numeric Telegram user ID:", "`Example: 7850023357`")
         }
         title, prompt, example = labels[plan_id]
         user_states[user_id] = {"state": "awaiting_protection_input", "plan_id": plan_id}
@@ -2838,19 +2871,16 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
     elif call.data == "lookup":
         user_states[user_id] = "awaiting_number"
-        msg = bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `10 credits` per successful search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+        msg = bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `10 credits` per search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
         bot.register_next_step_handler(msg, process_lookup)
         bot.answer_callback_query(call.id)
     elif call.data == "telegram_lookup":
         user_states[user_id] = "awaiting_telegram_username"
-        msg = bot.send_message(call.message.chat.id, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `15 credits` per successful search\n\n🛡️ After lookup, you can protect your Telegram ID for ₹99!\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+        msg = bot.send_message(call.message.chat.id, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `15 credits` per search\n\n🛡️ After lookup, you can protect your Telegram ID for ₹99!\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
         bot.register_next_step_handler(msg, process_telegram_lookup)
         bot.answer_callback_query(call.id)
     elif call.data == "vehicle_lookup":
-        user_states[user_id] = "awaiting_vehicle_number"
-        msg = bot.send_message(call.message.chat.id, "🚘 *Enter Vehicle Number:*\n\n`Example: HR60E3838`\n\n💎 Cost: `10 credits` per successful search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
-        bot.register_next_step_handler(msg, process_vehicle_lookup)
-        bot.answer_callback_query(call.id)
+        bot.answer_callback_query(call.id, "Vehicle lookup is currently disabled.", show_alert=True)
     elif call.data in ["protect", "protection_menu"]:
         show_protection_menu(call.message)
         bot.answer_callback_query(call.id)
@@ -2883,7 +2913,6 @@ def callback_handler(call):
 *🛡️ PROTECTION*
 • Number Protection → ₹99
 • Telegram Number Protection → ₹99
-• Vehicle Number Protection → ₹99
 """
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🛒 BUY CREDITS", callback_data="buy"))
