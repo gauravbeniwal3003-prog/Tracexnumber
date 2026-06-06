@@ -602,9 +602,20 @@ def call_telegram_lookup_api(username):
             return result, None
         else:
             # Check if it's a "no result" response
-            if "No data found" in html_content or "not found" in html_content.lower():
+            no_data_markers = [
+                "no data found", "not found", "no records", "no record",
+                "no result", "no results", "data not found", "record not found"
+            ]
+            lower_html = html_content.lower()
+            if any(marker in lower_html for marker in no_data_markers):
                 return {"error": "no_result"}, None
-            return None, "no_data_found"
+
+            # API replied HTTP 200 but no supported fields were present.
+            # Treat this as no data for user-side billing/display, not a temporary API crash.
+            # True API errors remain: non-200, timeout, connection error, empty response, JSON/HTML block change.
+            if html_content.strip():
+                return {"error": "no_result"}, None
+            return None, "empty_api_response"
             
     except requests.exceptions.Timeout:
         return None, "timeout"
@@ -658,15 +669,19 @@ def process_telegram_lookup(message):
     """Process Telegram username lookup"""
     user_id = message.from_user.id
     username_input = str(message.text or "").strip()
-    
-    # Clear state
-    if user_id in user_states:
-        del user_states[user_id]
-    
+
     if username_input == "/cancel":
+        user_states.pop(user_id, None)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
-    
+
+    # If user pressed inline CANCEL, the registered next-step handler may still fire. Ignore it safely.
+    if user_states.get(user_id) != "awaiting_telegram_username":
+        return
+
+    # Clear state only after confirming this message belongs to Telegram lookup
+    user_states.pop(user_id, None)
+
     # Validate username format
     username_clean = username_input
     if not username_input.startswith('@'):
@@ -1810,7 +1825,11 @@ def payment_session_reminder_worker(chat_id, user_id, tx_code, plan_label):
         if get_manual_claim_status(tx_code) == "pending":
             bot.send_message(
                 chat_id,
-                f"⏰ *Payment Reminder*\\n\\n🧾 TX: `{tx_code}`\\n\\nAgar payment ho gaya hai to please payment screenshot yahin share karo, taaki admin verify kar sake.",
+                f"""⏰ *Payment Reminder*
+
+🧾 TX: `{tx_code}`
+
+Agar payment ho gaya hai to please payment screenshot yahin share karo, taaki admin verify kar sake.""",
                 parse_mode="Markdown"
             )
 
@@ -1818,7 +1837,11 @@ def payment_session_reminder_worker(chat_id, user_id, tx_code, plan_label):
         if get_manual_claim_status(tx_code) == "pending":
             bot.send_message(
                 chat_id,
-                f"✅ *Don’t worry!*\\n\\n🧾 TX: `{tx_code}`\\n\\nAapka payment safe rahega. Screenshot share karo, plan verify hone ke baad enjoy kar paoge.",
+                f"""✅ *Don’t worry!*
+
+🧾 TX: `{tx_code}`
+
+Aapka payment safe rahega. Screenshot share karo, plan verify hone ke baad enjoy kar paoge.""",
                 parse_mode="Markdown"
             )
 
@@ -1828,7 +1851,12 @@ def payment_session_reminder_worker(chat_id, user_id, tx_code, plan_label):
             if ok:
                 bot.send_message(
                     chat_id,
-                    f"❌ *Payment Session Auto Rejected*\\n\\n🧾 TX: `{tx_code}`\\nReason: `Payment screenshot not received within 3 minutes`\\n\\nNew payment session create karke dobara try kar sakte ho.",
+                    f"""❌ *Payment Session Auto Rejected*
+
+🧾 TX: `{tx_code}`
+Reason: `Payment screenshot not received within 3 minutes`
+
+New payment session create karke dobara try kar sakte ho.""",
                     reply_markup=main_menu_markup(user_id),
                     parse_mode="Markdown"
                 )
@@ -2109,15 +2137,19 @@ Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
 def process_lookup(message):
     user_id = message.from_user.id
     raw_phone = str(message.text or "").strip()
-    phone = normalize_indian_mobile(raw_phone)
-    
-    if user_id in user_states:
-        del user_states[user_id]
-    
+
     if raw_phone == "/cancel":
+        user_states.pop(user_id, None)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
-    
+
+    # If inline CANCEL was pressed, ignore the old registered next-step handler.
+    if user_states.get(user_id) != "awaiting_number":
+        return
+
+    user_states.pop(user_id, None)
+    phone = normalize_indian_mobile(raw_phone)
+
     if not phone:
         bot.reply_to(message, "❌ *Invalid number!*\n\nEnter Indian mobile number.\nExamples: `9876543210` or `+919876543210`", 
                     reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
@@ -2428,10 +2460,16 @@ Protected data will not be shown in lookup results.
 
 def process_protection_payment_input(message, plan_id):
     user_id = message.from_user.id
-    user_states.pop(user_id, None)
     if message.text == "/cancel":
+        user_states.pop(user_id, None)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
+
+    state = user_states.get(user_id)
+    if not (isinstance(state, dict) and state.get("state") == "awaiting_protection_input" and state.get("plan_id") == plan_id):
+        return
+
+    user_states.pop(user_id, None)
     value = str(message.text or "").strip()
     if plan_id == "protect_number":
         if not re.match(r'^[6-9]\d{9}$', value):
@@ -2645,6 +2683,10 @@ def handle_plan_selection(call):
     plan = PLAN_CONFIG.get(plan_id)
     if not plan:
         bot.answer_callback_query(call.id, "Invalid plan selected.", show_alert=True)
+        return
+
+    if plan_id == "protect_vehicle":
+        bot.answer_callback_query(call.id, "Vehicle protection removed.", show_alert=True)
         return
 
     if plan_id in ["protect_number", "protect_telegram"]:
@@ -2863,12 +2905,20 @@ def callback_handler(call):
                 bot.send_message(call.message.chat.id, "🏠 *MAIN MENU*", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         bot.answer_callback_query(call.id)
     elif call.data == "cancel":
-        if user_id in user_states:
-            del user_states[user_id]
-        if user_id in temp_data:
-            del temp_data[user_id]
-        bot.edit_message_text("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
-        bot.answer_callback_query(call.id)
+        user_states.pop(user_id, None)
+        temp_data.pop(user_id, None)
+        with active_number_sessions_lock:
+            active_number_sessions.discard(user_id)
+        with active_telegram_sessions_lock:
+            active_telegram_sessions.discard(user_id)
+        try:
+            bot.edit_message_text("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        except Exception:
+            try:
+                bot.edit_message_caption("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+            except Exception:
+                bot.send_message(call.message.chat.id, "❌ Cancelled. Use /start for main menu.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        bot.answer_callback_query(call.id, "Cancelled")
     elif call.data == "lookup":
         user_states[user_id] = "awaiting_number"
         msg = bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `10 credits` per search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
