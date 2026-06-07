@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Cashfree
-Version: 6.0.0 - Clean UI, Updated Pricing, Vehicle Lookup Removed
+Version: 6.0.0 - Centralized Configuration
 """
 
 import os
@@ -31,6 +31,68 @@ telebot = _require_package("telebot", "pyTelegramBotAPI")
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 requests = _require_package("requests", "requests")
 
+# ==================== CENTRALIZED CONFIGURATION ====================
+# ⚠️ CHANGE ALL CREDIT-RELATED SETTINGS HERE ONLY ⚠️
+# This is the ONLY place you need to modify for credit costs
+
+class BotConfig:
+    """Centralized configuration - Change values here only"""
+    
+    # ========== CREDIT COSTS (Modify these) ==========
+    NUMBER_LOOKUP_COST = 5      # Cost for number lookup in credits
+    TELEGRAM_LOOKUP_COST = 10    # Cost for telegram lookup in credits
+    NEW_USER_FREE_CREDITS = 10   # Free credits for new users
+    
+    # ========== PRICING PLANS (Modify these) ==========
+    # Credit Packs
+    CREDIT_PLANS = {
+        "c10": {"amount": 20, "credits": 10, "label": "10 Credits"},
+        "c50": {"amount": 70, "credits": 50, "label": "50 Credits"},
+        "c100": {"amount": 100, "credits": 100, "label": "100 Credits"}
+    }
+    
+    # Unlimited Plans
+    UNLIMITED_PLANS = {
+        "u1w": {"amount": 200, "minutes": 10080, "label": "7 Days Unlimited", "days": 7},
+        "u1m": {"amount": 500, "minutes": 43200, "label": "30 Days Unlimited", "days": 30}
+    }
+    
+    # Protection Plans
+    PROTECTION_PLANS = {
+        "protect_number": {"amount": 99, "label": "Number Protection"},
+        "protect_telegram": {"amount": 99, "label": "Telegram Number Protection"}
+    }
+    
+    # Bot Booking
+    BOT_BOOKING_PLAN = {"amount": 399, "label": "Custom Bot Booking"}
+    
+    # ========== SYSTEM SETTINGS (Optional modifications) ==========
+    MAX_LOOKUP_RESULTS = 20
+    TELEGRAM_SAFE_LIMIT = 3900
+    COOLDOWN_SECONDS = 3
+    AUTO_DELETE_SECONDS = 120
+    PAYMENT_SESSION_COOLDOWN_SECONDS = 60
+    GROUP_LINK = "https://t.me/Gaurav_beni_0001"
+    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
+    
+    @classmethod
+    def get_all_plans(cls):
+        """Merge all plans into one dictionary"""
+        plans = {}
+        plans.update(cls.CREDIT_PLANS)
+        plans.update(cls.UNLIMITED_PLANS)
+        plans.update(cls.PROTECTION_PLANS)
+        plans["bot_booking"] = cls.BOT_BOOKING_PLAN
+        return plans
+    
+    @classmethod
+    def get_credit_cost_text(cls):
+        """Returns formatted credit cost text for messages"""
+        return f"Number: {cls.NUMBER_LOOKUP_COST} credits | Telegram: {cls.TELEGRAM_LOOKUP_COST} credits"
+
+# Initialize config instance for easy access
+CONFIG = BotConfig()
+
 # ==================== ENVIRONMENT VARIABLES (SECURITY FIX) ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -47,7 +109,6 @@ LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number").strip()
 TELEGRAM_LOOKUP_API_URL = os.getenv("TELEGRAM_LOOKUP_API_URL", "https://exploitsindia.site/lookup/telegram.php")
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Gaurav_beni_0001")
 PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
 
 # Validate required config
 if not BOT_TOKEN:
@@ -57,48 +118,33 @@ if not SUPABASE_URL or not (SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY):
     print("❌ SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY are required")
     sys.exit(1)
 
-# ==================== CONSTANTS ====================
+# ==================== CONSTANTS (Derived from CONFIG) ====================
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7850023357"))
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "-1003743686626"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@gaurav_beniwal_0001")
 BOT_VERSION = "6.0.0"
 
-# Updated pricing
-NUMBER_LOOKUP_COST = 5
-TELEGRAM_LOOKUP_COST = 10
+# Get values from config
+NUMBER_LOOKUP_COST = CONFIG.NUMBER_LOOKUP_COST
+TELEGRAM_LOOKUP_COST = CONFIG.TELEGRAM_LOOKUP_COST
+NEW_USER_FREE_CREDITS = CONFIG.NEW_USER_FREE_CREDITS
+MAX_LOOKUP_RESULTS = CONFIG.MAX_LOOKUP_RESULTS
+TELEGRAM_SAFE_LIMIT = CONFIG.TELEGRAM_SAFE_LIMIT
+COOLDOWN_SECONDS = CONFIG.COOLDOWN_SECONDS
+AUTO_DELETE_SECONDS = CONFIG.AUTO_DELETE_SECONDS
+GROUP_LINK = CONFIG.GROUP_LINK
+WEBSITE_URL = CONFIG.WEBSITE_URL
+PAYMENT_SESSION_COOLDOWN_SECONDS = CONFIG.PAYMENT_SESSION_COOLDOWN_SECONDS
 
-# Updated unlimited plan pricing
-UNLIMITED_PLANS = {
-    "u1w": {"amount": 200, "minutes": 10080, "label": "7 Days Unlimited", "days": 7},
-    "u1m": {"amount": 500, "minutes": 43200, "label": "30 Days Unlimited", "days": 30}
-}
+# Plans
+CREDIT_PLANS = CONFIG.CREDIT_PLANS
+UNLIMITED_PLANS = CONFIG.UNLIMITED_PLANS
+PROTECTION_PLANS = CONFIG.PROTECTION_PLANS
+BOT_BOOKING_PLAN = CONFIG.BOT_BOOKING_PLAN
 
-CREDIT_PLANS = {
-    "c10": {"amount": 20, "credits": 10, "label": "10 Credits"},
-    "c50": {"amount": 70, "credits": 50, "label": "50 Credits"},
-    "c100": {"amount": 100, "credits": 100, "label": "100 Credits"}
-}
+# All plans merged
+PLAN_CONFIG = CONFIG.get_all_plans()
 
-PROTECTION_PLANS = {
-    "protect_number": {"amount": 99, "label": "Number Protection"},
-    "protect_telegram": {"amount": 99, "label": "Telegram Number Protection"}
-}
-
-BOT_BOOKING_PLAN = {"amount": 399, "label": "Custom Bot Booking"}
-
-# All plans merged for config lookup
-PLAN_CONFIG = {}
-PLAN_CONFIG.update(CREDIT_PLANS)
-PLAN_CONFIG.update(UNLIMITED_PLANS)
-PLAN_CONFIG.update(PROTECTION_PLANS)
-PLAN_CONFIG["bot_booking"] = BOT_BOOKING_PLAN
-
-MAX_LOOKUP_RESULTS = 20
-TELEGRAM_SAFE_LIMIT = 3900
-COOLDOWN_SECONDS = 3
-AUTO_DELETE_SECONDS = 120
-GROUP_LINK = "https://t.me/Gaurav_beni_0001"
-PAYMENT_SESSION_COOLDOWN_SECONDS = 60
 GENERIC_API_ERROR_MESSAGE = "❌ *API Error*\n\n💎 Credits NOT deducted"
 
 # ==================== SUPABASE LITE CLIENT ====================
@@ -220,6 +266,10 @@ IST = timezone(timedelta(hours=5, minutes=30))
 MAINTENANCE_MODE = False
 
 # ==================== HELPER FUNCTIONS ====================
+def get_credit_cost_display():
+    """Returns formatted string for credit costs - use this in all messages"""
+    return f"📱 Number Search → {NUMBER_LOOKUP_COST} Credits\n💬 Telegram Search → {TELEGRAM_LOOKUP_COST} Credits"
+
 def show_api_error(chat_id, message_id, lookup_type="api"):
     try:
         bot.edit_message_text(GENERIC_API_ERROR_MESSAGE, chat_id, message_id, parse_mode="Markdown")
@@ -376,17 +426,12 @@ def main_menu_markup(current_user_id=None):
 
 def credit_packs_markup():
     markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("💰 10 Credits - ₹20", callback_data="plan_c10"),
-        InlineKeyboardButton("💰 50 Credits - ₹70", callback_data="plan_c50"),
-        InlineKeyboardButton("💰 100 Credits - ₹100", callback_data="plan_c100")
-    )
-    markup.add(
-        InlineKeyboardButton("🚀 7 Days Unlimited - ₹200", callback_data="plan_u1w"),
-        InlineKeyboardButton("🚀 30 Days Unlimited - ₹500", callback_data="plan_u1m")
-    )
-    markup.add(InlineKeyboardButton("🛡️ Number Protection - ₹99", callback_data="plan_protect_number"))
-    markup.add(InlineKeyboardButton("💬 Telegram Protection - ₹99", callback_data="plan_protect_telegram"))
+    for plan_id, plan in CREDIT_PLANS.items():
+        markup.add(InlineKeyboardButton(f"💰 {plan['label']} - ₹{plan['amount']}", callback_data=f"plan_{plan_id}"))
+    for plan_id, plan in UNLIMITED_PLANS.items():
+        markup.add(InlineKeyboardButton(f"🚀 {plan['label']} - ₹{plan['amount']}", callback_data=f"plan_{plan_id}"))
+    for plan_id, plan in PROTECTION_PLANS.items():
+        markup.add(InlineKeyboardButton(f"🛡️ {plan['label']} - ₹{plan['amount']}", callback_data=f"plan_{plan_id}"))
     markup.add(InlineKeyboardButton("🔙 Back", callback_data="main_menu"))
     return markup
 
@@ -446,7 +491,7 @@ def get_user(telegram_user_id):
         else:
             new_user = {
                 "telegram_user_id": telegram_user_id,
-                "credits": 10,
+                "credits": NEW_USER_FREE_CREDITS,
                 "total_searches": 0,
                 "first_seen": datetime.now(timezone.utc).isoformat(),
                 "last_seen": datetime.now(timezone.utc).isoformat(),
@@ -496,7 +541,7 @@ def add_credits(telegram_user_id, amount):
         if not response.data or len(response.data) == 0:
             new_user = {
                 "telegram_user_id": telegram_user_id,
-                "credits": 10 + int(amount or 0),
+                "credits": NEW_USER_FREE_CREDITS + int(amount or 0),
                 "total_searches": 0,
                 "first_seen": datetime.now(timezone.utc).isoformat(),
                 "last_seen": datetime.now(timezone.utc).isoformat(),
@@ -1901,10 +1946,10 @@ def start(message):
 
 ━━━━━━━━━━━━━━━━
 
-📱 Number Search → 2 Credits
-💬 Telegram Search → 5 Credits
+📱 Number Search → {NUMBER_LOOKUP_COST} Credits
+💬 Telegram Search → {TELEGRAM_LOOKUP_COST} Credits
 
-🎁 New users receive free credits.
+🎁 New users receive {NEW_USER_FREE_CREDITS} free credits.
 
 👇 Select an option below.
 {footer()}
@@ -2082,6 +2127,15 @@ def callback_handler(call):
             except:
                 pass
         
+        # Build credit packs text dynamically from config
+        credit_packs_text = ""
+        for plan_id, plan in CREDIT_PLANS.items():
+            credit_packs_text += f"• {plan['label']} → ₹{plan['amount']}\n"
+        
+        unlimited_plans_text = ""
+        for plan_id, plan in UNLIMITED_PLANS.items():
+            unlimited_plans_text += f"• {plan['label']} → ₹{plan['amount']}\n"
+        
         credits_msg = f"""
 *💎 MY CREDITS*
 ━━━━━━━━━━━━━━━━━━
@@ -2089,12 +2143,9 @@ def callback_handler(call):
 🔎 *Used:* `{total_searches}`
 ━━━━━━━━━━━━━━━━━━
 *📦 CREDIT PACKS*
-• 10 Credits → ₹20  
-• 50 Credits → ₹70  
-• 100 Credits → ₹100
+{credit_packs_text}
 *🚀 UNLIMITED PLANS*
-• 7 Days → ₹200
-• 30 Days → ₹500
+{unlimited_plans_text}
 *🛡️ PROTECTION*
 • Number Protection → ₹99
 • Telegram ID Protection → ₹99
@@ -2308,8 +2359,8 @@ if __name__ == "__main__":
     print("=" * 50)
     print(f"TraceX Lookup v{BOT_VERSION} is starting...")
     print(f"Admin ID: {ADMIN_ID}")
-    print(f"Updated Pricing: Number = {NUMBER_LOOKUP_COST} credits, Telegram = {TELEGRAM_LOOKUP_COST} credits")
-    print(f"Unlimited Plans: 7 Days = ₹200, 30 Days = ₹500")
+    print(f"Current Pricing: Number = {NUMBER_LOOKUP_COST} credits, Telegram = {TELEGRAM_LOOKUP_COST} credits")
+    print(f"Unlimited Plans: 7 Days = ₹{UNLIMITED_PLANS['u1w']['amount']}, 30 Days = ₹{UNLIMITED_PLANS['u1m']['amount']}")
     print("=" * 50)
     
     keep_alive()
