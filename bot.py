@@ -1,14 +1,17 @@
 """
 TraceX Website Promoter - Auto Broadcast System
-Sends non-spammy website promotions to bot users at optimal times
-Version: 1.0.0
+Sends non-spammy website promotions to bot users
+Version: 2.0.0 - Production Ready
 """
 
 import os
 import time
 import random
 import threading
+import signal
+import sys
 from datetime import datetime, timedelta
+from typing import List, Dict, Optional
 import requests
 
 # ==================== CONFIGURATION ====================
@@ -17,13 +20,19 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 WEBSITE_URL = "https://tracexnumber.web.app"
-ADMIN_ID = 7850023357
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7850023357"))
 
-# Broadcast timing (in seconds)
+# Broadcast timing
 BASE_INTERVAL = 2 * 60 * 60  # 2 hours
-VARIATION = 15 * 60  # Add up to 15 minutes variation to avoid spam patterns
+VARIATION = 15 * 60  # ±15 minutes variation
 
-# Different message templates to rotate (prevents spam detection)
+# Anti-spam: minimum 3 hours between messages to same user
+MIN_USER_INTERVAL = 3 * 60 * 60
+
+# Rate limiting: messages per second
+MESSAGES_PER_SECOND = 1
+
+# Message templates (rotating)
 MESSAGE_TEMPLATES = [
     {
         "title": "⚡ FASTER ON WEB",
@@ -131,453 +140,640 @@ Don't miss your daily credits!""",
     }
 ]
 
-# ==================== SUPABASE HELPER ====================
+# ==================== SUPABASE CLIENT ====================
 
-class SimpleSupabase:
-    def __init__(self, url, key):
+class SupabaseClient:
+    """Simple Supabase client for fetching users"""
+    
+    def __init__(self, url: str, key: str):
         self.url = url.rstrip('/')
+        self.key = key
         self.headers = {
             "apikey": key,
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json"
         }
     
-    def get_all_users(self):
+    def get_all_users(self) -> List[int]:
         """Get all non-banned users"""
+        try:
+            # Try to get from telegram_users table
+            response = requests.get(
+                f"{self.url}/rest/v1/telegram_users",
+                headers=self.headers,
+                params={"select": "telegram_user_id", "is_banned": "eq.false"},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                users = response.json()
+                return [user['telegram_user_id'] for user in users]
+            else:
+                print(f"Supabase error: {response.status_code}")
+                return []
+                
+        except Exception as e:
+            print(f"Supabase connection error: {e}")
+            return []
+    
+    def get_user_count(self) -> int:
+        """Get total user count"""
         try:
             response = requests.get(
                 f"{self.url}/rest/v1/telegram_users",
                 headers=self.headers,
-                params={"select": "telegram_user_id,is_banned", "is_banned": "eq.false"},
+                params={"select": "telegram_user_id", "is_banned": "eq.false"},
                 timeout=10
             )
             if response.status_code == 200:
-                return [user['telegram_user_id'] for user in response.json()]
-            return []
-        except Exception as e:
-            print(f"Supabase error: {e}")
-            return []
+                return len(response.json())
+            return 0
+        except:
+            return 0
 
-# ==================== BROADCAST MANAGER ====================
+# ==================== TELEGRAM BOT ====================
 
-class WebsitePromoter:
-    def __init__(self):
-        self.supabase = SimpleSupabase(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
-        self.last_broadcast_time = {}
-        self.message_index = 0
-        self.is_running = True
-        self.stats = {
-            "total_sent": 0,
-            "total_failed": 0,
-            "last_broadcast": None,
-            "users_count": 0
-        }
+class TelegramBot:
+    """Telegram API wrapper"""
     
-    def get_next_interval(self):
-        """Get next broadcast interval with variation to avoid spam patterns"""
-        variation = random.randint(-VARIATION, VARIATION)
-        interval = BASE_INTERVAL + variation
-        return max(60, interval)  # Never less than 1 minute
+    def __init__(self, token: str):
+        self.token = token
+        self.base_url = f"https://api.telegram.org/bot{token}"
+        self.last_update_id = 0
     
-    def get_next_message(self, user_id):
-        """Rotate messages and personalize"""
-        template = MESSAGE_TEMPLATES[self.message_index % len(MESSAGE_TEMPLATES)]
-        self.message_index += 1
-        
-        # Personalize message
-        message = template["message"].replace("{url}", WEBSITE_URL)
-        
-        return {
-            "title": template["title"],
-            "message": message,
-            "button_text": template["button_text"]
-        }
-    
-    def send_telegram_message(self, user_id, message_data):
-        """Send message to a single user"""
+    def send_message(self, chat_id: int, text: str, reply_markup: dict = None) -> bool:
+        """Send message to user"""
         try:
-            # Create inline keyboard with website button
-            keyboard = {
-                "inline_keyboard": [[
-                    {"text": message_data["button_text"], "url": WEBSITE_URL},
-                    {"text": "🔙 MAIN MENU", "callback_data": "main_menu"}
-                ]]
-            }
-            
             payload = {
-                "chat_id": user_id,
-                "text": message_data["message"],
+                "chat_id": chat_id,
+                "text": text,
                 "parse_mode": "Markdown",
-                "reply_markup": keyboard,
                 "disable_web_page_preview": False
             }
             
+            if reply_markup:
+                payload["reply_markup"] = reply_markup
+            
             response = requests.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                f"{self.base_url}/sendMessage",
                 json=payload,
                 timeout=10
             )
             
-            if response.status_code == 200:
-                return True, None
-            else:
-                error = response.json().get("description", "Unknown error")
-                return False, error
-                
+            return response.status_code == 200
+            
         except Exception as e:
-            return False, str(e)
+            print(f"Send error to {chat_id}: {e}")
+            return False
     
-    def should_send_to_user(self, user_id):
+    def get_updates(self, timeout: int = 30) -> List[dict]:
+        """Get updates for command handling"""
+        try:
+            params = {
+                "offset": self.last_update_id + 1,
+                "timeout": timeout,
+                "allowed_updates": ["message", "callback_query"]
+            }
+            
+            response = requests.get(
+                f"{self.base_url}/getUpdates",
+                params=params,
+                timeout=timeout + 5
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("ok"):
+                    updates = data.get("result", [])
+                    if updates:
+                        self.last_update_id = updates[-1]["update_id"]
+                    return updates
+            
+            return []
+            
+        except Exception as e:
+            print(f"Get updates error: {e}")
+            return []
+
+# ==================== BROADCAST MANAGER ====================
+
+class BroadcastManager:
+    """Manages auto broadcasts to users"""
+    
+    def __init__(self, bot: TelegramBot, supabase: SupabaseClient):
+        self.bot = bot
+        self.supabase = supabase
+        self.last_broadcast_time: Dict[int, datetime] = {}
+        self.message_index = 0
+        self.is_running = True
+        self.is_paused = False
+        
+        # Statistics
+        self.stats = {
+            "total_sent": 0,
+            "total_failed": 0,
+            "total_skipped": 0,
+            "last_broadcast": None,
+            "broadcast_count": 0,
+            "start_time": datetime.now()
+        }
+    
+    def get_next_interval(self) -> int:
+        """Get next broadcast interval with random variation"""
+        variation = random.randint(-VARIATION, VARIATION)
+        return max(60, BASE_INTERVAL + variation)
+    
+    def get_next_message(self) -> dict:
+        """Get next message template (rotating)"""
+        template = MESSAGE_TEMPLATES[self.message_index % len(MESSAGE_TEMPLATES)]
+        self.message_index += 1
+        
+        # Create keyboard with website button
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": template["button_text"], "url": WEBSITE_URL},
+                    {"text": "🔙 MENU", "callback_data": "main_menu"}
+                ]
+            ]
+        }
+        
+        return {
+            "text": template["message"].replace("{url}", WEBSITE_URL),
+            "keyboard": keyboard,
+            "title": template["title"]
+        }
+    
+    def should_send_to_user(self, user_id: int) -> bool:
         """Check if user should receive message (anti-spam)"""
         last_time = self.last_broadcast_time.get(user_id)
         if not last_time:
             return True
         
-        # Minimum 3 hours between messages to same user
-        min_interval = 3 * 60 * 60
-        return (datetime.now() - last_time).total_seconds() >= min_interval
+        time_since = (datetime.now() - last_time).total_seconds()
+        return time_since >= MIN_USER_INTERVAL
     
-    def broadcast_to_users(self, users):
-        """Send broadcast to all users with rate limiting"""
+    def send_broadcast(self, users: List[int]) -> Dict:
+        """Send broadcast to all users"""
         if not users:
-            print("No users found")
-            return
+            return {"sent": 0, "failed": 0, "skipped": 0}
         
-        print(f"\n{'='*50}")
-        print(f"📢 Starting broadcast to {len(users)} users")
-        print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"{'='*50}")
-        
-        message_data = self.get_next_message(None)
+        message_data = self.get_next_message()
         sent = 0
         failed = 0
         skipped = 0
         
-        for idx, user_id in enumerate(users):
-            # Check if should send
+        print(f"\n{'='*60}")
+        print(f"📢 BROADCAST #{self.stats['broadcast_count'] + 1}")
+        print(f"📝 Template: {message_data['title']}")
+        print(f"👥 Total Users: {len(users)}")
+        print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"{'='*60}")
+        
+        for idx, user_id in enumerate(users, 1):
+            # Check if paused
+            if self.is_paused:
+                print("⏸️ Broadcast paused")
+                break
+            
+            # Check anti-spam
             if not self.should_send_to_user(user_id):
                 skipped += 1
+                if idx % 100 == 0:
+                    print(f"📊 Progress: {idx}/{len(users)} (Sent: {sent}, Skipped: {skipped}, Failed: {failed})")
                 continue
             
             # Send message
-            success, error = self.send_telegram_message(user_id, message_data)
+            success = self.bot.send_message(
+                user_id,
+                message_data["text"],
+                message_data["keyboard"]
+            )
             
             if success:
                 sent += 1
                 self.last_broadcast_time[user_id] = datetime.now()
-                print(f"✅ Sent to {user_id}")
+                if sent % 10 == 0:
+                    print(f"✅ Sent to {user_id}")
             else:
                 failed += 1
-                print(f"❌ Failed to {user_id}: {error}")
+                print(f"❌ Failed: {user_id}")
             
-            # Rate limiting: 1 message per second (Telegram limit is 30/sec)
-            time.sleep(1)
+            # Rate limiting
+            time.sleep(1 / MESSAGES_PER_SECOND)
             
-            # Progress update every 50 users
-            if (idx + 1) % 50 == 0:
-                print(f"📊 Progress: {idx+1}/{len(users)} (Sent: {sent}, Failed: {failed}, Skipped: {skipped})")
+            # Progress update
+            if idx % 50 == 0:
+                print(f"📊 Progress: {idx}/{len(users)} (Sent: {sent}, Skipped: {skipped}, Failed: {failed})")
         
         # Update stats
         self.stats["total_sent"] += sent
         self.stats["total_failed"] += failed
+        self.stats["total_skipped"] += skipped
         self.stats["last_broadcast"] = datetime.now()
-        self.stats["users_count"] = len(users)
+        self.stats["broadcast_count"] += 1
         
-        print(f"\n{'='*50}")
-        print(f"✅ Broadcast complete!")
+        print(f"\n{'='*60}")
+        print(f"✅ BROADCAST COMPLETE")
         print(f"📤 Sent: {sent}")
         print(f"❌ Failed: {failed}")
-        print(f"⏭️ Skipped (recent): {skipped}")
-        print(f"📊 Total sent all time: {self.stats['total_sent']}")
-        print(f"{'='*50}\n")
+        print(f"⏭️ Skipped: {skipped}")
+        print(f"📊 Total Sent All Time: {self.stats['total_sent']}")
+        print(f"{'='*60}\n")
         
-        # Send report to admin
-        self.send_admin_report(sent, failed, skipped, len(users))
+        return {"sent": sent, "failed": failed, "skipped": skipped}
     
-    def send_admin_report(self, sent, failed, skipped, total):
-        """Send broadcast report to admin"""
+    def send_admin_report(self, result: Dict):
+        """Send report to admin"""
         try:
+            uptime = datetime.now() - self.stats["start_time"]
+            hours = uptime.total_seconds() // 3600
+            
             report = f"""📊 *BROADCAST REPORT*
 
-━━━━━━━━━━━━━━━━
-👥 Total Users: `{total}`
-✅ Delivered: `{sent}`
-❌ Failed: `{failed}`
-⏭️ Skipped: `{skipped}`
-━━━━━━━━━━━━━━━━
-📈 Total All Time: `{self.stats['total_sent']}`
-⏰ Time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+━━━━━━━━━━━━━━━━━━
+📨 Just Sent: `{result['sent']}` users
+❌ Failed: `{result['failed']}`
+⏭️ Skipped: `{result['skipped']}`
 
-🌐 Website: {WEBSITE_URL}"""
-            
-            keyboard = {
-                "inline_keyboard": [[
-                    {"text": "📊 VIEW STATS", "callback_data": "web_stats"},
-                    {"text": "⏸️ PAUSE", "callback_data": "pause_broadcast"}
-                ]]
-            }
-            
-            requests.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                json={
-                    "chat_id": ADMIN_ID,
-                    "text": report,
-                    "parse_mode": "Markdown",
-                    "reply_markup": keyboard
-                },
-                timeout=10
-            )
-        except Exception as e:
-            print(f"Admin report failed: {e}")
-    
-    def run_continuous(self):
-        """Main loop - runs broadcasts at optimized intervals"""
-        print("🚀 Website Promoter Started")
-        print(f"📅 Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"⏰ Base Interval: {BASE_INTERVAL//3600} hours (+{VARIATION//60} min variation)")
-        print(f"🌐 Website: {WEBSITE_URL}")
-        print(f"{'='*50}\n")
-        
-        # Send startup notification to admin
-        try:
-            startup_msg = f"""✅ *Website Promoter Active*
+━━━━━━━━━━━━━━━━━━
+📈 ALL TIME STATS
+📤 Total Sent: `{self.stats['total_sent']}`
+❌ Total Failed: `{self.stats['total_failed']}`
+⏭️ Total Skipped: `{self.stats['total_skipped']}`
+🔄 Broadcasts: `{self.stats['broadcast_count']}`
 
-⏰ Schedule: Every {BASE_INTERVAL//3600} hours
-🎲 Variation: ±{VARIATION//60} minutes
+━━━━━━━━━━━━━━━━━━
+⏰ Uptime: `{int(hours)} hours`
 🌐 Website: {WEBSITE_URL}
 
-Messages will rotate through {len(MESSAGE_TEMPLATES)} templates
-Users will receive max 8 messages per day
-
-/status - Check current stats
-/pause - Stop broadcasts
+/status - View full stats
+/pause - Pause broadcasts
 /resume - Resume broadcasts"""
             
-            requests.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                json={"chat_id": ADMIN_ID, "text": startup_msg, "parse_mode": "Markdown"},
-                timeout=10
-            )
-        except:
-            pass
+            self.bot.send_message(ADMIN_ID, report)
+            
+        except Exception as e:
+            print(f"Admin report error: {e}")
+    
+    def get_status(self) -> Dict:
+        """Get current status"""
+        uptime = datetime.now() - self.stats["start_time"]
+        
+        return {
+            "is_running": self.is_running,
+            "is_paused": self.is_paused,
+            "total_sent": self.stats["total_sent"],
+            "total_failed": self.stats["total_failed"],
+            "total_skipped": self.stats["total_skipped"],
+            "broadcast_count": self.stats["broadcast_count"],
+            "last_broadcast": self.stats["last_broadcast"],
+            "uptime_seconds": uptime.total_seconds(),
+            "next_template": (self.message_index % len(MESSAGE_TEMPLATES)) + 1,
+            "total_templates": len(MESSAGE_TEMPLATES),
+            "users_tracked": len(self.last_broadcast_time)
+        }
+    
+    def pause(self):
+        """Pause broadcasts"""
+        self.is_paused = True
+        print("⏸️ Broadcasts paused")
+    
+    def resume(self):
+        """Resume broadcasts"""
+        self.is_paused = False
+        print("▶️ Broadcasts resumed")
+    
+    def stop(self):
+        """Stop the manager"""
+        self.is_running = False
+        print("🛑 Broadcast manager stopped")
+    
+    def run(self):
+        """Main broadcast loop"""
+        print("🚀 Website Promoter Started")
+        print(f"📅 Start: {self.stats['start_time'].strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"⏰ Interval: {BASE_INTERVAL//3600} hours ±{VARIATION//60} min")
+        print(f"🛡️ Anti-spam: {MIN_USER_INTERVAL//3600} hours between messages")
+        print(f"📝 Templates: {len(MESSAGE_TEMPLATES)}")
+        print(f"🌐 Website: {WEBSITE_URL}")
+        print(f"{'='*60}\n")
+        
+        # Send startup notification
+        self.bot.send_message(
+            ADMIN_ID,
+            f"✅ *Website Promoter Active*\n\n"
+            f"⏰ Schedule: Every {BASE_INTERVAL//3600} hours\n"
+            f"🎲 Variation: ±{VARIATION//60} minutes\n"
+            f"🌐 Website: {WEBSITE_URL}\n\n"
+            f"Commands:\n"
+            f"/status - View stats\n"
+            f"/pause - Pause broadcasts\n"
+            f"/resume - Resume broadcasts\n"
+            f"/test - Send test message"
+        )
         
         while self.is_running:
             try:
-                # Get all users
-                users = self.supabase.get_all_users() if self.supabase else []
+                if not self.is_paused:
+                    # Get users
+                    users = self.supabase.get_all_users()
+                    
+                    if users:
+                        # Send broadcast
+                        result = self.send_broadcast(users)
+                        # Send report to admin
+                        self.send_admin_report(result)
+                    else:
+                        print(f"⚠️ No users found at {datetime.now()}")
+                        # Try to get count for debugging
+                        count = self.supabase.get_user_count()
+                        print(f"📊 User count from API: {count}")
                 
-                if users:
-                    # Send broadcast
-                    self.broadcast_to_users(users)
-                else:
-                    print(f"⚠️ No users found at {datetime.now()}")
-                
-                # Calculate next broadcast time
+                # Wait for next broadcast
                 interval = self.get_next_interval()
                 next_time = datetime.now() + timedelta(seconds=interval)
                 
-                print(f"⏰ Next broadcast at: {next_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                status = "PAUSED" if self.is_paused else "ACTIVE"
+                print(f"⏰ [{status}] Next broadcast at: {next_time.strftime('%Y-%m-%d %H:%M:%S')}")
                 print(f"💤 Sleeping for {interval//60} minutes...\n")
                 
-                # Sleep until next broadcast (check every minute for stop signal)
+                # Sleep with periodic checks
                 for _ in range(interval):
                     if not self.is_running:
                         break
                     time.sleep(1)
                     
             except KeyboardInterrupt:
-                print("\n🛑 Stopping promoter...")
-                self.is_running = False
+                print("\n🛑 Received interrupt signal")
                 break
             except Exception as e:
-                print(f"❌ Error in broadcast loop: {e}")
+                print(f"❌ Broadcast loop error: {e}")
                 time.sleep(60)  # Wait 1 minute before retry
+        
+        print("🛑 Broadcast manager stopped")
+
+# ==================== COMMAND HANDLER ====================
+
+class CommandHandler:
+    """Handles admin commands from Telegram"""
     
-    def get_status(self):
-        """Get current status"""
-        return {
-            "is_running": self.is_running,
-            "total_sent": self.stats["total_sent"],
-            "total_failed": self.stats["total_failed"],
-            "last_broadcast": self.stats["last_broadcast"],
-            "message_template_index": self.message_index % len(MESSAGE_TEMPLATES),
-            "users_tracked": len(self.last_broadcast_time)
+    def __init__(self, bot: TelegramBot, manager: BroadcastManager):
+        self.bot = bot
+        self.manager = manager
+        self.is_running = True
+    
+    def handle_command(self, text: str, user_id: int):
+        """Handle incoming command"""
+        if user_id != ADMIN_ID:
+            return
+        
+        cmd = text.lower().strip()
+        
+        if cmd == "/status":
+            self.send_status()
+        
+        elif cmd == "/pause":
+            self.manager.pause()
+            self.bot.send_message(ADMIN_ID, "⏸️ Broadcasts paused. Send /resume to start again.")
+        
+        elif cmd == "/resume":
+            self.manager.resume()
+            self.bot.send_message(ADMIN_ID, "▶️ Broadcasts resumed!")
+        
+        elif cmd == "/test":
+            self.send_test()
+        
+        elif cmd == "/help":
+            self.send_help()
+        
+        elif cmd == "/stats":
+            self.send_detailed_stats()
+    
+    def send_status(self):
+        """Send current status to admin"""
+        status = self.manager.get_status()
+        
+        uptime_hours = status["uptime_seconds"] / 3600
+        
+        status_msg = f"""📊 *PROMOTER STATUS*
+
+━━━━━━━━━━━━━━━━━━
+🟢 Status: `{"Active" if status["is_running"] and not status["is_paused"] else "Paused" if status["is_paused"] else "Stopped"}`
+📤 Total Sent: `{status["total_sent"]}`
+❌ Total Failed: `{status["total_failed"]}`
+⏭️ Total Skipped: `{status["total_skipped"]}`
+🔄 Broadcasts Run: `{status["broadcast_count"]}`
+
+━━━━━━━━━━━━━━━━━━
+📝 Next Template: `{status["next_template"]}/{status["total_templates"]}`
+👥 Users Tracked: `{status["users_tracked"]}`
+
+━━━━━━━━━━━━━━━━━━
+⏰ Uptime: `{uptime_hours:.1f} hours`
+🌐 Website: {WEBSITE_URL}
+
+/help - Show all commands"""
+        
+        self.bot.send_message(ADMIN_ID, status_msg)
+    
+    def send_detailed_stats(self):
+        """Send detailed statistics"""
+        # Try to get user count from database
+        user_count = self.manager.supabase.get_user_count()
+        
+        stats_msg = f"""📈 *DETAILED STATISTICS*
+
+━━━━━━━━━━━━━━━━━━
+👥 Total Users in DB: `{user_count}`
+📤 Messages Sent: `{self.manager.stats['total_sent']}`
+📊 Avg per Broadcast: `{self.manager.stats['total_sent'] // max(1, self.manager.stats['broadcast_count'])}`
+
+━━━━━━━━━━━━━━━━━━
+🎯 CONVERSION EXPECTED
+• Daily Reach: ~{user_count // 3} users
+• Weekly Reach: ~{user_count} users
+
+━━━━━━━━━━━━━━━━━━
+⚙️ CONFIGURATION
+• Interval: {BASE_INTERVAL//3600} hours
+• Anti-spam: {MIN_USER_INTERVAL//3600} hours
+• Templates: {len(MESSAGE_TEMPLATES)}
+
+🌐 {WEBSITE_URL}"""
+        
+        self.bot.send_message(ADMIN_ID, stats_msg)
+    
+    def send_test(self):
+        """Send test message to admin"""
+        test_msg = f"""🧪 *TEST BROADCAST*
+
+This is a test message from the website promoter.
+
+✅ System is working correctly!
+
+🌐 Website: {WEBSITE_URL}
+
+Features:
+✨ Flash speed lookups
+💰 Lower credit costs
+🎁 Regular offers
+📱 Better experience
+
+*All systems operational*"""
+        
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": "🌐 VISIT WEBSITE", "url": WEBSITE_URL}
+            ]]
         }
+        
+        self.bot.send_message(ADMIN_ID, test_msg, keyboard)
     
-    def stop(self):
-        """Stop the promoter"""
-        self.is_running = False
-        print("🛑 Promoter stopped")
+    def send_help(self):
+        """Send help message"""
+        help_msg = f"""📖 *WEBSITE PROMOTER COMMANDS*
 
-# ==================== TELEGRAM COMMANDS FOR ADMIN ====================
+━━━━━━━━━━━━━━━━━━
+/status - Show current status
+/stats - Show detailed statistics
+/pause - Pause auto broadcasts
+/resume - Resume broadcasts
+/test - Send test message
+/help - Show this help
 
-def handle_admin_commands():
-    """Simple command handler for admin (runs in separate thread)"""
-    last_update_id = 0
+━━━━━━━━━━━━━━━━━━
+📊 HOW IT WORKS
+• Broadcasts every ~2 hours
+• Rotates through {len(MESSAGE_TEMPLATES)} templates
+• Anti-spam: {MIN_USER_INTERVAL//3600} hours between messages
+• Random variation: ±{VARIATION//60} minutes
+
+━━━━━━━━━━━━━━━━━━
+🌐 Website: {WEBSITE_URL}"""
+        
+        self.bot.send_message(ADMIN_ID, help_msg)
     
-    while True:
-        try:
-            # Get updates
-            response = requests.get(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
-                params={"offset": last_update_id + 1, "timeout": 30},
-                timeout=35
-            )
-            
-            if response.status_code == 200:
-                updates = response.json().get("result", [])
+    def run(self):
+        """Run command handler loop"""
+        print("✅ Command handler started")
+        
+        while self.is_running:
+            try:
+                updates = self.bot.get_updates(timeout=30)
                 
                 for update in updates:
-                    last_update_id = update["update_id"]
-                    
-                    # Check for message
+                    # Handle messages
                     if "message" in update:
                         message = update["message"]
                         user_id = message["from"]["id"]
                         text = message.get("text", "")
                         
-                        # Only respond to admin
-                        if user_id == ADMIN_ID:
-                            if text == "/status":
-                                status = promoter.get_status()
-                                status_msg = f"""📊 *PROMOTER STATUS*
+                        if text.startswith("/"):
+                            self.handle_command(text, user_id)
+                    
+                    # Handle callback queries
+                    elif "callback_query" in update:
+                        callback = update["callback_query"]
+                        user_id = callback["from"]["id"]
+                        # You can add callback handling here if needed
+                
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"Command handler error: {e}")
+                time.sleep(5)
+    
+    def stop(self):
+        """Stop command handler"""
+        self.is_running = False
 
-━━━━━━━━━━━━━━━━
-🟢 Status: `{"Active" if status['is_running'] else "Stopped"}`
-📤 Total Sent: `{status['total_sent']}`
-❌ Total Failed: `{status['total_failed']}`
-👥 Users Tracked: `{status['users_tracked']}`
-📝 Next Template: `{status['message_template_index'] + 1}/{len(MESSAGE_TEMPLATES)}`
-━━━━━━━━━━━━━━━━
-⏰ Last Broadcast: `{status['last_broadcast'].strftime('%Y-%m-%d %H:%M:%S') if status['last_broadcast'] else 'Never'}`
+# ==================== HEALTH CHECK SERVER ====================
 
-🌐 Website: {WEBSITE_URL}"""
-                                
-                                requests.post(
-                                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                                    json={"chat_id": ADMIN_ID, "text": status_msg, "parse_mode": "Markdown"},
-                                    timeout=10
-                                )
-                            
-                            elif text == "/pause":
-                                promoter.stop()
-                                requests.post(
-                                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                                    json={"chat_id": ADMIN_ID, "text": "⏸️ Broadcasts paused. Send /resume to start again."},
-                                    timeout=10
-                                )
-                            
-                            elif text == "/resume":
-                                if not promoter.is_running:
-                                    promoter.is_running = True
-                                    # Start new thread
-                                    thread = threading.Thread(target=promoter.run_continuous, daemon=True)
-                                    thread.start()
-                                    requests.post(
-                                        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                                        json={"chat_id": ADMIN_ID, "text": "▶️ Broadcasts resumed!"},
-                                        timeout=10
-                                    )
-                                else:
-                                    requests.post(
-                                        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                                        json={"chat_id": ADMIN_ID, "text": "⚠️ Promoter is already running!"},
-                                        timeout=10
-                                    )
-                            
-                            elif text == "/test":
-                                # Test broadcast to admin only
-                                test_msg = f"""🧪 *TEST BROADCAST*
-
-This is a test message from website promoter.
-
-🌐 Website: {WEBSITE_URL}
-
-✨ Features:
-• Flash speed
-• Lower credits
-• Regular offers
-
-✅ Working correctly!"""
-                                
-                                keyboard = {
-                                    "inline_keyboard": [[
-                                        {"text": "🌐 VISIT WEBSITE", "url": WEBSITE_URL}
-                                    ]]
-                                }
-                                
-                                requests.post(
-                                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                                    json={
-                                        "chat_id": ADMIN_ID,
-                                        "text": test_msg,
-                                        "parse_mode": "Markdown",
-                                        "reply_markup": keyboard
-                                    },
-                                    timeout=10
-                                )
-                            
-                            elif text == "/help":
-                                help_msg = """📖 *WEBSITE PROMOTER COMMANDS*
-
-/status - Show promoter status
-/pause - Stop auto broadcasts
-/resume - Start broadcasts again
-/test - Send test message
-/help - Show this help
-
-━━━━━━━━━━━━━━━━
-📊 *How it works*
-• Broadcasts every ~2 hours
-• Rotates through 7 message templates
-• Users get max 8 messages/day
-• Smart anti-spam protection
-• Personalised with user's name
-
-🌐 {url}""".replace("{url}", WEBSITE_URL)
-                                
-                                requests.post(
-                                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                                    json={"chat_id": ADMIN_ID, "text": help_msg, "parse_mode": "Markdown"},
-                                    timeout=10
-                                )
-            
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"Command handler error: {e}")
-            time.sleep(5)
+def start_health_server(port: int):
+    """Start a simple HTTP server for health checks"""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/' or self.path == '/health':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'OK')
+            else:
+                self.send_response(404)
+                self.end_headers()
+        
+        def log_message(self, format, *args):
+            pass  # Suppress logs
+    
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"✅ Health check server started on port {port}")
+    server.serve_forever()
 
 # ==================== MAIN ====================
 
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    print("\n🛑 Received shutdown signal")
+    sys.exit(0)
+
 if __name__ == "__main__":
+    # Setup signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     print("=" * 60)
-    print("🚀 TRACEX WEBSITE PROMOTER")
+    print("🚀 TRACEX WEBSITE PROMOTER v2.0")
     print("=" * 60)
     print(f"🌐 Website: {WEBSITE_URL}")
-    print(f"⏰ Broadcast Interval: Every {BASE_INTERVAL//3600} hours")
-    print(f"🎲 Variation: ±{VARIATION//60} minutes")
-    print(f"📝 Message Templates: {len(MESSAGE_TEMPLATES)}")
+    print(f"⏰ Interval: Every {BASE_INTERVAL//3600} hours (±{VARIATION//60} min)")
+    print(f"📝 Templates: {len(MESSAGE_TEMPLATES)}")
+    print(f"🛡️ Anti-spam: {MIN_USER_INTERVAL//3600} hours between messages")
     print("=" * 60)
-    print("\n💡 Admin Commands:")
-    print("  /status  - Check promoter status")
+    print("\n💡 Admin Commands (send in Telegram):")
+    print("  /status  - Current status")
+    print("  /stats   - Detailed statistics")
     print("  /pause   - Stop broadcasts")
     print("  /resume  - Start broadcasts")
     print("  /test    - Send test message")
     print("  /help    - Show help")
     print("=" * 60)
     
-    # Initialize promoter
-    promoter = WebsitePromoter()
+    # Start health check server for Render (if PORT env is set)
+    render_port = os.getenv("PORT")
+    if render_port:
+        port = int(render_port)
+        health_thread = threading.Thread(target=start_health_server, args=(port,), daemon=True)
+        health_thread.start()
+        print(f"✅ Render health check enabled on port {port}")
     
-    # Start command handler thread
-    cmd_thread = threading.Thread(target=handle_admin_commands, daemon=True)
+    # Initialize components
+    bot = TelegramBot(BOT_TOKEN)
+    supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+    
+    if not supabase:
+        print("❌ ERROR: SUPABASE_URL and SUPABASE_KEY required!")
+        print("Set environment variables and restart.")
+        sys.exit(1)
+    
+    # Create broadcast manager
+    manager = BroadcastManager(bot, supabase)
+    
+    # Create command handler
+    command_handler = CommandHandler(bot, manager)
+    
+    # Start command handler in background
+    cmd_thread = threading.Thread(target=command_handler.run, daemon=True)
     cmd_thread.start()
     
-    # Start promoter
+    # Run broadcast manager (blocks)
     try:
-        promoter.run_continuous()
+        manager.run()
     except KeyboardInterrupt:
         print("\n🛑 Shutting down...")
-        promoter.stop()
+        manager.stop()
+        command_handler.stop()
         print("✅ Shutdown complete")
+        sys.exit(0)
