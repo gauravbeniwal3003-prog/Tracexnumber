@@ -1,13 +1,23 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Cashfree
-Version: 6.1.0 - Updated Pricing & Removed Auto-Delete
+Version: 6.0.0 - Centralized Configuration
 """
 
 import os
 import sys
+import time
+import re
+import uuid
+import hmac
+import hashlib
+import json
+import threading
+import signal
+from datetime import datetime, timedelta, timezone
+from flask import Flask, request, jsonify
 
-# Friendly dependency check for Render/Termux
+# ==================== DEPENDENCY CHECK ====================
 def _require_package(import_name, pip_name=None):
     try:
         return __import__(import_name)
@@ -18,20 +28,126 @@ def _require_package(import_name, pip_name=None):
         raise
 
 telebot = _require_package("telebot", "pyTelegramBotAPI")
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 requests = _require_package("requests", "requests")
-import time
-import re
-from datetime import datetime, timedelta, timezone
-import threading
-import signal
-import uuid
-import hmac
-import hashlib
-import json
-from flask import Flask, request, jsonify
 
-# Lightweight Supabase REST client
+# ==================== CENTRALIZED CONFIGURATION ====================
+# ⚠️ CHANGE ALL CREDIT-RELATED SETTINGS HERE ONLY ⚠️
+# This is the ONLY place you need to modify for credit costs
+
+class BotConfig:
+    """Centralized configuration - Change values here only"""
+    
+    # ========== CREDIT COSTS (Modify these) ==========
+    NUMBER_LOOKUP_COST = 5      # Cost for number lookup in credits
+    TELEGRAM_LOOKUP_COST = 10    # Cost for telegram lookup in credits
+    NEW_USER_FREE_CREDITS = 10   # Free credits for new users
+    
+    # ========== PRICING PLANS (Modify these) ==========
+    # Credit Packs
+    CREDIT_PLANS = {
+        "c10": {"amount": 20, "credits": 10, "label": "10 Credits"},
+        "c50": {"amount": 70, "credits": 50, "label": "50 Credits"},
+        "c100": {"amount": 100, "credits": 100, "label": "100 Credits"}
+    }
+    
+    # Unlimited Plans
+    UNLIMITED_PLANS = {
+        "u1w": {"amount": 200, "minutes": 10080, "label": "7 Days Unlimited", "days": 7},
+        "u1m": {"amount": 500, "minutes": 43200, "label": "30 Days Unlimited", "days": 30}
+    }
+    
+    # Protection Plans
+    PROTECTION_PLANS = {
+        "protect_number": {"amount": 99, "label": "Number Protection"},
+        "protect_telegram": {"amount": 99, "label": "Telegram Number Protection"}
+    }
+    
+    # Bot Booking
+    BOT_BOOKING_PLAN = {"amount": 399, "label": "Custom Bot Booking"}
+    
+    # ========== SYSTEM SETTINGS (Optional modifications) ==========
+    MAX_LOOKUP_RESULTS = 20
+    TELEGRAM_SAFE_LIMIT = 3900
+    COOLDOWN_SECONDS = 3
+    AUTO_DELETE_SECONDS = 120
+    PAYMENT_SESSION_COOLDOWN_SECONDS = 60
+    GROUP_LINK = "https://t.me/Gaurav_beni_0001"
+    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
+    
+    @classmethod
+    def get_all_plans(cls):
+        """Merge all plans into one dictionary"""
+        plans = {}
+        plans.update(cls.CREDIT_PLANS)
+        plans.update(cls.UNLIMITED_PLANS)
+        plans.update(cls.PROTECTION_PLANS)
+        plans["bot_booking"] = cls.BOT_BOOKING_PLAN
+        return plans
+    
+    @classmethod
+    def get_credit_cost_text(cls):
+        """Returns formatted credit cost text for messages"""
+        return f"Number: {cls.NUMBER_LOOKUP_COST} credits | Telegram: {cls.TELEGRAM_LOOKUP_COST} credits"
+
+# Initialize config instance for easy access
+CONFIG = BotConfig()
+
+# ==================== ENVIRONMENT VARIABLES (SECURITY FIX) ====================
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+CASHFREE_APP_ID = os.getenv("CASHFREE_APP_ID", "")
+CASHFREE_SECRET_KEY = os.getenv("CASHFREE_SECRET_KEY", "")
+CASHFREE_WEBHOOK_SECRET = os.getenv("CASHFREE_WEBHOOK_SECRET", "")
+CASHFREE_ENV = os.getenv("CASHFREE_ENV", "TEST")
+RENDER_BASE_URL = os.getenv("RENDER_BASE_URL", "https://your-app.onrender.com")
+LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/api/v1/lookup.php").strip()
+LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "").strip()
+LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number").strip()
+TELEGRAM_LOOKUP_API_URL = os.getenv("TELEGRAM_LOOKUP_API_URL", "https://exploitsindia.site/lookup/telegram.php")
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Gaurav_beni_0001")
+PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
+
+# Validate required config
+if not BOT_TOKEN:
+    print("❌ BOT_TOKEN environment variable is required")
+    sys.exit(1)
+if not SUPABASE_URL or not (SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY):
+    print("❌ SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY are required")
+    sys.exit(1)
+
+# ==================== CONSTANTS (Derived from CONFIG) ====================
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7850023357"))
+ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "-1003743686626"))
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@gaurav_beniwal_0001")
+BOT_VERSION = "6.0.0"
+
+# Get values from config
+NUMBER_LOOKUP_COST = CONFIG.NUMBER_LOOKUP_COST
+TELEGRAM_LOOKUP_COST = CONFIG.TELEGRAM_LOOKUP_COST
+NEW_USER_FREE_CREDITS = CONFIG.NEW_USER_FREE_CREDITS
+MAX_LOOKUP_RESULTS = CONFIG.MAX_LOOKUP_RESULTS
+TELEGRAM_SAFE_LIMIT = CONFIG.TELEGRAM_SAFE_LIMIT
+COOLDOWN_SECONDS = CONFIG.COOLDOWN_SECONDS
+AUTO_DELETE_SECONDS = CONFIG.AUTO_DELETE_SECONDS
+GROUP_LINK = CONFIG.GROUP_LINK
+WEBSITE_URL = CONFIG.WEBSITE_URL
+PAYMENT_SESSION_COOLDOWN_SECONDS = CONFIG.PAYMENT_SESSION_COOLDOWN_SECONDS
+
+# Plans
+CREDIT_PLANS = CONFIG.CREDIT_PLANS
+UNLIMITED_PLANS = CONFIG.UNLIMITED_PLANS
+PROTECTION_PLANS = CONFIG.PROTECTION_PLANS
+BOT_BOOKING_PLAN = CONFIG.BOT_BOOKING_PLAN
+
+# All plans merged
+PLAN_CONFIG = CONFIG.get_all_plans()
+
+GENERIC_API_ERROR_MESSAGE = "❌ *API Error*\n\n💎 Credits NOT deducted"
+
+# ==================== SUPABASE LITE CLIENT ====================
 class _SupabaseResult:
     def __init__(self, data=None, count=None):
         self.data = data if data is not None else []
@@ -84,17 +200,13 @@ class _SupabaseTableQuery:
 
     def execute(self):
         if not self.client.url or not self.client.key:
-            raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY are required")
+            raise RuntimeError("Supabase credentials required")
         url = f"{self.client.url}/rest/v1/{self.table}"
         headers = dict(self.client.headers)
         headers.update(self.headers)
         response = requests.request(
-            self.method,
-            url,
-            params=self.params,
-            json=self.payload,
-            headers=headers,
-            timeout=30,
+            self.method, url, params=self.params, json=self.payload,
+            headers=headers, timeout=30
         )
         if response.status_code >= 400:
             raise RuntimeError(f"Supabase REST error {response.status_code}: {response.text[:500]}")
@@ -109,7 +221,7 @@ class _SupabaseTableQuery:
                 total = content_range.split("/")[-1]
                 count = None if total == "*" else int(total)
             except Exception:
-                count = None
+                pass
         if count is None and isinstance(data, list):
             count = len(data)
         return _SupabaseResult(data=data, count=count)
@@ -130,160 +242,117 @@ class _SupabaseLiteClient:
 def create_client(url, key):
     return _SupabaseLiteClient(url, key)
 
-Client = _SupabaseLiteClient
+# ==================== INITIALIZATION ====================
+SUPABASE_KEY = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None, threaded=True)
 
-# ==================== CONFIGURATION ====================
-BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
-ADMIN_ID = 7850023357
-ADMIN_CHANNEL_ID = -1003743686626
-ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
-BOT_VERSION = "6.1.0"
+# State Management
+user_states = {}
+user_cooldown = {}
+temp_data = {}
+payment_session_cooldown = {}
+active_number_sessions = set()
+active_number_sessions_lock = threading.Lock()
+active_telegram_sessions = set()
+active_telegram_sessions_lock = threading.Lock()
+proof_forwarded_txs = set()
 
-# Lookup API Configuration
-LOOKUP_API_URL = os.getenv("LOOKUP_API_URL", "https://techvishalboss.com/api/v1/lookup.php").strip()
-LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "TVB_SGL_053B3AA6").strip()
-LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number").strip()
+# Daily stats
+daily_search_stats = {}
+daily_stats_lock = threading.Lock()
+IST = timezone(timedelta(hours=5, minutes=30))
 
-# API Endpoints (Hardcoded)
-BASE_API_URL = "https://exploitsindia.site//hdhddhjdjddjdjdjdndnddnnccndndhejdmdnnd"
-TELEGRAM_LOOKUP_API_URL = f"{BASE_API_URL}/telegram.php"
-IDENTITY_LOOKUP_API_URL = f"{BASE_API_URL}/aadhar.php"
-IFSC_LOOKUP_API_URL = f"{BASE_API_URL}/ifsc.php"
+MAINTENANCE_MODE = False
 
-# Updated Costs (Same as before)
-NUMBER_LOOKUP_COST = 5
-TELEGRAM_LOOKUP_COST = 12
-IDENTITY_LOOKUP_COST = 15
-IFSC_LOOKUP_COST = 20
-
-# Updated Plan Pricing
-PLAN_CONFIG = {
-    "c40": {"amount": 20, "credits": 40, "unlimited_minutes": 0, "payment_for": "credits", "label": "40 Credits - ₹20"},
-    "c120": {"amount": 50, "credits": 120, "unlimited_minutes": 0, "payment_for": "credits", "label": "120 Credits - ₹50"},
-    "c400": {"amount": 100, "credits": 400, "unlimited_minutes": 0, "payment_for": "credits", "label": "400 Credits - ₹100"},
-    "u1d": {"amount": 50, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited - ₹50"},
-    "u1w": {"amount": 250, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited - ₹250"},
-    "u1m": {"amount": 800, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited - ₹800"},
-    "protect_number": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Number Protection - ₹99"},
-    "protect_telegram": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_telegram", "label": "Telegram Number Protection - ₹99"},
-    "bot_booking": {"amount": 999, "credits": 0, "unlimited_minutes": 0, "payment_for": "bot_booking", "label": "Custom Bot Booking - ₹999"},
-}
-
-MAX_LOOKUP_RESULTS = 20
-TELEGRAM_SAFE_LIMIT = 3900
-PROTECT_NUMBER_PRICE = 99
-PROTECT_TELEGRAM_PRICE = 99
-
-COOLDOWN_SECONDS = 3
-# AUTO_DELETE_SECONDS removed - messages will not auto-delete
-GROUP_LINK = "https://t.me/Gaurav_beni_0001"
-REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@Gaurav_beni_0001")
-PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
-
-GENERIC_API_ERROR_MESSAGE = "❌ *API Error*\n\n💎 Credits NOT deducted"
-
-# Branding patterns to remove
-BRANDING_PATTERNS = [
-    r'💳 BUY API\s*:\s*@[a-zA-Z0-9_]+\s*',
-    r'🆘 SUPPORT\s*:\s*@[a-zA-Z0-9_]+\s*',
-    r'BUY API\s*:\s*@[a-zA-Z0-9_]+\s*',
-    r'SUPPORT\s*:\s*@[a-zA-Z0-9_]+\s*',
-]
-
-def remove_branding(text):
-    """Remove branding lines from API response"""
-    if not text:
-        return text
-    for pattern in BRANDING_PATTERNS:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\n\s*\n', '\n\n', text)
-    return text.strip()
+# ==================== HELPER FUNCTIONS ====================
+def get_credit_cost_display():
+    """Returns formatted string for credit costs - use this in all messages"""
+    return f"📱 Number Search → {NUMBER_LOOKUP_COST} Credits\n💬 Telegram Search → {TELEGRAM_LOOKUP_COST} Credits"
 
 def show_api_error(chat_id, message_id, lookup_type="api"):
-    """Show only a clean API error to users"""
     try:
         bot.edit_message_text(GENERIC_API_ERROR_MESSAGE, chat_id, message_id, parse_mode="Markdown")
-    except Exception as edit_error:
-        print(f"Failed to show generic API error for {lookup_type}: {edit_error}")
-
-def call_generic_api(url, params, lookup_type="api"):
-    """Generic API caller for all endpoints"""
-    try:
-        print(f"[{lookup_type.upper()} API] Calling: {url}")
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/6.1",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Connection": "close",
-        }
-        
-        response = requests.get(url, params=params, headers=headers, timeout=30)
-        print(f"[{lookup_type.upper()} API] Response Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            return None, f"http_{response.status_code}"
-        
-        html_content = response.text
-        print(f"[{lookup_type.upper()} API] Response length: {len(html_content)}")
-        
-        cleaned_content = remove_branding(html_content)
-        
-        no_data_markers = [
-            "no data found", "not found", "no records", "no record",
-            "no result", "no results", "data not found", "record not found",
-            "invalid", "error"
-        ]
-        lower_content = cleaned_content.lower()
-        if any(marker in lower_content for marker in no_data_markers):
-            return {"error": "no_result"}, None
-        
-        if cleaned_content and len(cleaned_content) > 50:
-            return {"html_content": cleaned_content, "raw_html": html_content}, None
-        else:
-            return {"error": "no_result"}, None
-            
-    except requests.exceptions.Timeout:
-        return None, "timeout"
-    except requests.exceptions.ConnectionError:
-        return None, "connection_error"
     except Exception as e:
-        print(f"[{lookup_type.upper()} API] Exception: {e}")
-        return None, f"exception_{e}"
+        print(f"Failed to show API error: {e}")
 
-def call_telegram_lookup_api(username):
-    """Call Telegram lookup API"""
-    if not username.startswith('@'):
-        username = '@' + username
-    url = TELEGRAM_LOOKUP_API_URL
-    params = {'exploits': username}
-    return call_generic_api(url, params, "telegram")
+def safe_json_response(response):
+    try:
+        return response.json()
+    except Exception:
+        raise ValueError("Invalid API JSON response")
 
-def call_identity_lookup_api(aadhar_number):
-    """Call Identity/Aadhar lookup API"""
-    url = IDENTITY_LOOKUP_API_URL
-    params = {'exploits': aadhar_number}
-    return call_generic_api(url, params, "identity")
+def has_valid_number_results(result):
+    if not isinstance(result, dict):
+        return False
+    api_results = result.get("results")
+    if isinstance(api_results, dict):
+        return any(isinstance(v, dict) for v in api_results.values())
+    if isinstance(api_results, list):
+        return any(isinstance(v, dict) for v in api_results)
+    return any(str(k).lower().startswith("result") and isinstance(v, dict) for k, v in result.items()) or ("name" in result or "mobile" in result)
 
-def call_ifsc_lookup_api(ifsc_code):
-    """Call IFSC lookup API"""
-    url = IFSC_LOOKUP_API_URL
-    params = {'exploits': ifsc_code}
-    return call_generic_api(url, params, "ifsc")
+def call_unstable_json_api(params, lookup_type="number", max_retries=5, timeout=30):
+    base_url = str(LOOKUP_API_URL or "").strip()
+    clean_params = {str(k): str(v).strip() for k, v in (params or {}).items() if v is not None}
+    
+    headers_attempts = [
+        {"User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/6.0", "Accept": "application/json,text/plain,*/*", "Connection": "close"},
+        {"User-Agent": "python-requests TraceXBot/6.0", "Accept": "application/json,text/plain,*/*", "Connection": "close"},
+    ]
+    
+    last_error = "unknown"
+    for attempt in range(1, max_retries + 1):
+        headers = headers_attempts[(attempt - 1) % len(headers_attempts)]
+        try:
+            response = requests.get(base_url, params=clean_params, headers=headers, timeout=timeout)
+            raw_preview = (response.text or "")[:500].replace("\n", " ")
+            
+            if response.status_code in (429, 500, 502, 503, 504, 520, 521, 522, 523, 524):
+                last_error = f"temporary_http_{response.status_code}"
+                time.sleep(min(2 * attempt, 8))
+                continue
+            
+            if response.status_code != 200:
+                last_error = f"http_{response.status_code}"
+                time.sleep(min(2 * attempt, 8))
+                continue
+            
+            if raw_preview.lstrip().lower().startswith("<!doctype") or "<html" in raw_preview.lower():
+                last_error = "html_non_json_response"
+                time.sleep(min(2 * attempt, 8))
+                continue
+            
+            try:
+                data = response.json()
+            except Exception:
+                last_error = "json_parse_failed"
+                time.sleep(min(2 * attempt, 8))
+                continue
+            
+            if not isinstance(data, dict):
+                last_error = "json_not_object"
+                time.sleep(min(2 * attempt, 8))
+                continue
+            
+            return data, None
+            
+        except requests.exceptions.Timeout:
+            last_error = "timeout"
+            time.sleep(min(2 * attempt, 8))
+        except Exception as e:
+            last_error = f"exception_{e}"
+            time.sleep(min(2 * attempt, 8))
+    
+    return None, last_error
 
 def notify_admin_api_issue(lookup_type, query, error_reason):
-    """Send compact admin-only debug alert"""
     try:
-        bot.send_message(
-            ADMIN_ID,
-            f"⚠️ *API TEMP ISSUE*\n\nType: `{lookup_type}`\nQuery: `{query}`\nReason: `{str(error_reason)[:500]}`\n\nUser credits were not deducted.",
-            parse_mode="Markdown"
-        )
+        bot.send_message(ADMIN_ID, f"⚠️ *API TEMP ISSUE*\n\nType: `{lookup_type}`\nQuery: `{query}`\nReason: `{str(error_reason)[:500]}`\n\nUser credits were not deducted.", parse_mode="Markdown")
     except Exception as e:
         print(f"Admin API issue notify failed: {e}")
 
 def split_long_text(text, limit=TELEGRAM_SAFE_LIMIT):
-    """Split long Telegram text safely"""
     text = str(text or "")
     chunks = []
     current = ""
@@ -298,7 +367,6 @@ def split_long_text(text, limit=TELEGRAM_SAFE_LIMIT):
     return chunks or [""]
 
 def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, parse_mode="Markdown"):
-    """Edit or send long message - NO AUTO DELETE"""
     chunks = split_long_text(text)
     sent_messages = []
     for idx, chunk in enumerate(chunks):
@@ -310,84 +378,76 @@ def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, pars
                 sent_messages.append(bot.edit_message_text(chunk, chat_id, message_id, reply_markup=markup, parse_mode=parse_mode))
             else:
                 sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, parse_mode=parse_mode, disable_web_page_preview=True))
-        except Exception as send_error:
-            print(f"Long message send error: {send_error}")
+        except Exception:
+            if is_first:
+                sent_messages.append(bot.edit_message_text(chunk, chat_id, message_id, reply_markup=markup))
+            else:
+                sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, disable_web_page_preview=True))
     return sent_messages
 
-# ==================== KEYBOARD MARKUP ====================
-def get_main_keyboard():
-    """Create main menu keyboard buttons"""
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    keyboard.add(
-        KeyboardButton("📱 NUMBER LOOKUP"),
-        KeyboardButton("💬 TELEGRAM LOOKUP")
-    )
-    keyboard.add(
-        KeyboardButton("🆔 IDENTITY LOOKUP"),
-        KeyboardButton("🏦 IFSC LOOKUP")
-    )
-    keyboard.add(
-        KeyboardButton("💎 MY CREDITS"),
-        KeyboardButton("🛒 BUY CREDITS")
-    )
-    keyboard.add(
-        KeyboardButton("🛡️ PROTECTION"),
-        KeyboardButton("🤖 BOOK A BOT")
-    )
-    return keyboard
-
-def get_cancel_keyboard():
-    """Cancel button keyboard"""
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-    keyboard.add(KeyboardButton("❌ CANCEL"))
-    return keyboard
-
-def get_back_keyboard():
-    """Back to main menu keyboard"""
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-    keyboard.add(KeyboardButton("🏠 MAIN MENU"))
-    return keyboard
-
-def universal_markup(back=False, buy=False, join=False, admin=False):
-    markup = InlineKeyboardMarkup(row_width=2)
-    buttons = []
-    if buy:
-        buttons.append(InlineKeyboardButton("💎 BUY CREDITS", callback_data="buy"))
-    if join:
-        buttons.append(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
-    if admin:
-        buttons.append(InlineKeyboardButton("👨‍💻 CONTACT ADMIN", url="https://t.me/gaurav_beniwal_0001"))
-    if back:
-        buttons.append(InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu"))
-    for btn in buttons:
-        markup.add(btn)
-    return markup
+def auto_delete_sent_messages(chat_id, sent_messages):
+    time.sleep(AUTO_DELETE_SECONDS)
+    for msg in sent_messages:
+        try:
+            bot.delete_message(chat_id, msg.message_id)
+        except Exception:
+            pass
 
 def footer():
     return f"\n\n━━━━━━━━━━━━━━━━\n🌐 Website: {WEBSITE_URL}\n👨‍💻 Admin: {ADMIN_USERNAME}\n👥 Group: [Join Community]({GROUP_LINK})"
 
-def send_admin_alert(text, reply_markup=None, parse_mode="Markdown"):
-    """Send important admin alerts"""
-    sent = False
-    try:
-        bot.send_message(ADMIN_CHANNEL_ID, text, reply_markup=reply_markup, parse_mode=parse_mode)
-        sent = True
-    except Exception as e:
-        print(f"Admin channel alert failed: {e}")
-    if not sent:
-        try:
-            bot.send_message(ADMIN_ID, "⚠️ Admin group delivery failed, fallback DM:\n\n" + text, reply_markup=reply_markup, parse_mode=parse_mode)
-        except Exception as e:
-            print(f"Admin DM fallback failed: {e}")
-    return sent
-
 def header(title, emoji="🚀"):
     return f"{emoji} *{title}*\n━━━━━━━━━━━━━━━━\n"
 
+def cancel_button():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
+    return markup
+
+# ==================== UI COMPONENTS ====================
+def main_menu_markup(current_user_id=None):
+    """Simplified beginner-friendly main menu"""
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("🔍 Search Number", callback_data="lookup"),
+        InlineKeyboardButton("💬 Search Telegram", callback_data="telegram_lookup")
+    )
+    markup.add(
+        InlineKeyboardButton("💎 My Credits", callback_data="credits"),
+        InlineKeyboardButton("🛒 Buy Credits", callback_data="buy")
+    )
+    markup.add(
+        InlineKeyboardButton("🛡️ Protect Data", callback_data="protection_menu"),
+        InlineKeyboardButton("🤖 Book Custom Bot", callback_data="book_bot")
+    )
+    if current_user_id == ADMIN_ID:
+        markup.add(InlineKeyboardButton("🛠 Admin", callback_data="admin"))
+    return markup
+
+def credit_packs_markup():
+    markup = InlineKeyboardMarkup(row_width=2)
+    for plan_id, plan in CREDIT_PLANS.items():
+        markup.add(InlineKeyboardButton(f"💰 {plan['label']} - ₹{plan['amount']}", callback_data=f"plan_{plan_id}"))
+    for plan_id, plan in UNLIMITED_PLANS.items():
+        markup.add(InlineKeyboardButton(f"🚀 {plan['label']} - ₹{plan['amount']}", callback_data=f"plan_{plan_id}"))
+    for plan_id, plan in PROTECTION_PLANS.items():
+        markup.add(InlineKeyboardButton(f"🛡️ {plan['label']} - ₹{plan['amount']}", callback_data=f"plan_{plan_id}"))
+    markup.add(InlineKeyboardButton("🔙 Back", callback_data="main_menu"))
+    return markup
+
+def protection_menu_markup():
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("📱 Protect Number - ₹99", callback_data="plan_protect_number"),
+        InlineKeyboardButton("💬 Protect Telegram ID - ₹99", callback_data="plan_protect_telegram"),
+        InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")
+    )
+    return markup
+
 def join_required_markup():
     markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(InlineKeyboardButton("📢 JOIN CHANNEL", url=GROUP_LINK))
-    markup.add(InlineKeyboardButton("✅ I HAVE JOINED", callback_data="check_join"))
+    markup.add(InlineKeyboardButton("📢 Join Channel", url=GROUP_LINK))
+    markup.add(InlineKeyboardButton("✅ I Have Joined", callback_data="check_join"))
     return markup
 
 def is_channel_member(user_id):
@@ -396,109 +456,26 @@ def is_channel_member(user_id):
     try:
         member = bot.get_chat_member(REQUIRED_CHANNEL, user_id)
         return member.status in ["member", "administrator", "creator"]
-    except Exception as e:
-        print(f"Channel membership check error for {user_id}: {e}")
+    except Exception:
         return False
 
 def send_join_required(chat_id):
     bot.send_message(
         chat_id,
-        f"🔒 *Join Required*\n━━━━━━━━━━━━━━━━\n\nBot use karne ke liye pehle official channel join karo.\n\n📢 Channel: {GROUP_LINK}\n\nJoin karne ke baad `✅ I HAVE JOINED` dabao.",
+        f"🔒 *Join Required*\n━━━━━━━━━━━━━━━━\n\nPlease join our official channel first.\n\n📢 Channel: {GROUP_LINK}\n\nThen tap `✅ I Have Joined`.",
         reply_markup=join_required_markup(),
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
 
-def cancel_button():
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("❌ CANCEL", callback_data="cancel"))
-    return markup
-
-def credit_packs_markup():
+def telegram_lookup_protection_markup():
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("💰 40 Credits - ₹20", callback_data="plan_c40"),
-        InlineKeyboardButton("💰 120 Credits - ₹50", callback_data="plan_c120"),
-        InlineKeyboardButton("💰 400 Credits - ₹100", callback_data="plan_c400")
+        InlineKeyboardButton("🛡️ Protect My Telegram ID", callback_data="plan_protect_telegram"),
+        InlineKeyboardButton("🔍 New Telegram Lookup", callback_data="telegram_lookup")
     )
-    markup.add(
-        InlineKeyboardButton("🚀 1 Day Unlimited - ₹50", callback_data="plan_u1d"),
-        InlineKeyboardButton("🚀 7 Days Unlimited - ₹250", callback_data="plan_u1w"),
-        InlineKeyboardButton("🚀 30 Days Unlimited - ₹800", callback_data="plan_u1m")
-    )
-    markup.add(
-        InlineKeyboardButton("🛡️ Number Protection - ₹99", callback_data="plan_protect_number")
-    )
-    markup.add(
-        InlineKeyboardButton("💬 Telegram Protection - ₹99", callback_data="plan_protect_telegram")
-    )
-    markup.add(InlineKeyboardButton("🔙 BACK", callback_data="main_menu"))
+    markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu"))
     return markup
-
-# Supabase Configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
-# Cashfree Configuration
-CASHFREE_APP_ID = os.getenv("CASHFREE_APP_ID")
-CASHFREE_SECRET_KEY = os.getenv("CASHFREE_SECRET_KEY")
-CASHFREE_WEBHOOK_SECRET = os.getenv("CASHFREE_WEBHOOK_SECRET")
-CASHFREE_ENV = os.getenv("CASHFREE_ENV", "TEST")
-RENDER_BASE_URL = os.getenv("RENDER_BASE_URL", "https://your-app.onrender.com")
-
-CASHFREE_API_BASE = "https://sandbox.cashfree.com/pg" if CASHFREE_ENV == "TEST" else "https://api.cashfree.com/pg"
-CASHFREE_API_VERSION = "2023-08-01"
-
-def validate_startup_config():
-    missing = []
-    if not BOT_TOKEN:
-        missing.append("BOT_TOKEN")
-    if not SUPABASE_URL:
-        missing.append("SUPABASE_URL")
-    if not (SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY):
-        missing.append("SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY")
-    if missing:
-        print("❌ Missing required environment variables: " + ", ".join(missing))
-        print("Set them in Render/Termux before running the bot.")
-        sys.exit(1)
-
-validate_startup_config()
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None, threaded=True)
-
-SUPABASE_KEY = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
-if not SUPABASE_SERVICE_ROLE_KEY:
-    print("⚠️ SUPABASE_SERVICE_ROLE_KEY missing, RLS may block backend writes")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# State Management
-user_states = {}
-user_cooldown = {}
-temp_data = {}
-payment_session_cooldown = {}
-PAYMENT_SESSION_COOLDOWN_SECONDS = 60
-active_sessions = {}
-active_sessions_lock = threading.Lock()
-proof_forwarded_txs = set()
-
-daily_search_stats = {}
-daily_stats_lock = threading.Lock()
-IST = timezone(timedelta(hours=5, minutes=30))
-
-MAINTENANCE_MODE = False
-
-# ==================== MAINTENANCE MODE ====================
-MAINTENANCE_MESSAGE = """
-⚠️ BOT UNDER MAINTENANCE
-🛠️ TraceX is currently under maintenance and upgrades.
-⏰ Please try again later.
-📢 Till then, join our official channel for updates and announcements: https://t.me/Gaurav_beni_0001
-🙏 Thanks for your patience.
-"""
-
-@bot.message_handler(func=lambda message: MAINTENANCE_MODE and message.from_user.id != ADMIN_ID)
-def maintenance_handler(message):
-    bot.reply_to(message, MAINTENANCE_MESSAGE, parse_mode='Markdown')
 
 # ==================== SUPABASE FUNCTIONS ====================
 def get_user(telegram_user_id):
@@ -514,7 +491,7 @@ def get_user(telegram_user_id):
         else:
             new_user = {
                 "telegram_user_id": telegram_user_id,
-                "credits": 10,
+                "credits": NEW_USER_FREE_CREDITS,
                 "total_searches": 0,
                 "first_seen": datetime.now(timezone.utc).isoformat(),
                 "last_seen": datetime.now(timezone.utc).isoformat(),
@@ -537,22 +514,34 @@ def normalize_indian_mobile(value):
         digits = digits[2:]
     return digits if re.match(r"^[6-9]\d{9}$", digits) else None
 
-def normalize_aadhar(value):
-    raw = str(value or "").strip()
-    digits = re.sub(r"\D", "", raw)
-    return digits if re.match(r"^\d{12}$", digits) else None
-
-def normalize_ifsc(value):
-    raw = str(value or "").strip().upper()
-    return raw if re.match(r"^[A-Z]{4}0[A-Z0-9]{6}$", raw) else None
+def resolve_user_identifier(identifier):
+    token = str(identifier or "").strip()
+    if not token:
+        return None, None
+    if token.startswith("@"): 
+        token = token[1:]
+    if token.isdigit():
+        uid = int(token)
+        return uid, get_user(uid)
+    try:
+        resp = supabase.table("telegram_users").select("*").eq("telegram_username", token).limit(1).execute()
+        if not resp.data:
+            resp = supabase.table("telegram_users").select("*").ilike("telegram_username", token).limit(1).execute()
+        if resp.data:
+            user = resp.data[0]
+            return int(user.get("telegram_user_id")), user
+    except Exception as e:
+        print(f"Resolve username error: {e}")
+    return None, None
 
 def add_credits(telegram_user_id, amount):
     try:
         response = supabase.table("telegram_users").select("credits").eq("telegram_user_id", telegram_user_id).execute()
-        if not response.data:
+        
+        if not response.data or len(response.data) == 0:
             new_user = {
                 "telegram_user_id": telegram_user_id,
-                "credits": 10 + int(amount or 0),
+                "credits": NEW_USER_FREE_CREDITS + int(amount or 0),
                 "total_searches": 0,
                 "first_seen": datetime.now(timezone.utc).isoformat(),
                 "last_seen": datetime.now(timezone.utc).isoformat(),
@@ -561,14 +550,21 @@ def add_credits(telegram_user_id, amount):
                 "is_banned": False
             }
             result = supabase.table("telegram_users").insert(new_user).execute()
-            return result.data[0].get('credits', amount) if result.data else 0
+            if result.data and len(result.data) > 0:
+                return result.data[0].get('credits', amount)
+            return 0
         else:
             current_credits = response.data[0].get('credits', 0)
             new_credits = current_credits + amount
+            
             supabase.table("telegram_users").update({
                 "credits": new_credits,
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }).eq("telegram_user_id", telegram_user_id).execute()
+            
+            verify_response = supabase.table("telegram_users").select("credits").eq("telegram_user_id", telegram_user_id).execute()
+            if verify_response.data:
+                return verify_response.data[0].get('credits', new_credits)
             return new_credits
     except Exception as e:
         print(f"Add credits error: {e}")
@@ -580,109 +576,447 @@ def deduct_credits(telegram_user_id, amount=1):
         user = get_user(telegram_user_id)
         if not user:
             return False
+
         unlimited_expiry = user.get('unlimited_expiry')
         if unlimited_expiry:
             try:
-                expiry_date = datetime.fromisoformat(unlimited_expiry.replace('Z', '+00:00'))
+                if isinstance(unlimited_expiry, str):
+                    expiry_date = datetime.fromisoformat(unlimited_expiry.replace('Z', '+00:00'))
+                else:
+                    expiry_date = unlimited_expiry
                 if expiry_date > datetime.now(timezone.utc):
                     return True
             except Exception:
                 pass
-        current_credits = int(user.get('credits', 0))
-        if current_credits < amount:
-            return False
-        new_credits = current_credits - amount
-        supabase.table("telegram_users").update({
-            "credits": new_credits,
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }).eq("telegram_user_id", telegram_user_id).execute()
-        return True
+
+        credits = int(user.get('credits', 0) or 0)
+        if credits >= amount:
+            supabase.table("telegram_users").update({
+                "credits": credits - amount,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("telegram_user_id", telegram_user_id).execute()
+            return True
+        return False
     except Exception as e:
         print(f"Deduct credits error: {e}")
         return False
 
-def get_total_credits(telegram_user_id):
-    user = get_user(telegram_user_id)
-    return int(user.get('credits', 0)) if user else 0
-
 def increment_total_searches(telegram_user_id):
     try:
         user = get_user(telegram_user_id)
-        current = int(user.get('total_searches', 0)) if user else 0
-        supabase.table("telegram_users").update({
-            "total_searches": current + 1,
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }).eq("telegram_user_id", telegram_user_id).execute()
+        if user:
+            new_total = user.get('total_searches', 0) + 1
+            supabase.table("telegram_users").update({
+                "total_searches": new_total,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("telegram_user_id", telegram_user_id).execute()
+            return True
     except Exception as e:
         print(f"Increment searches error: {e}")
+    return False
+
+def get_total_credits(telegram_user_id):
+    try:
+        user = get_user(telegram_user_id)
+        return user.get('credits', 0) if user else 0
+    except Exception as e:
+        print(f"Get total credits error: {e}")
+        return 0
 
 def get_active_unlimited(user):
-    if not user:
-        return False, None
-    expiry = user.get("unlimited_expiry")
-    if not expiry:
+    unlimited_expiry_raw = user.get('unlimited_expiry') if user else None
+    if not unlimited_expiry_raw:
         return False, None
     try:
-        dt = datetime.fromisoformat(str(expiry).replace("Z", "+00:00"))
-        if dt > datetime.now(timezone.utc):
-            return True, dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        expiry_date = datetime.fromisoformat(str(unlimited_expiry_raw).replace('Z', '+00:00'))
+        if expiry_date > datetime.now(timezone.utc):
+            return True, str(unlimited_expiry_raw)
     except Exception:
         pass
     return False, None
 
-def is_number_protected(mobile):
+def is_number_protected(phone_number):
     try:
-        res = supabase.table("protected_numbers").select("mobile").eq("mobile", str(mobile)).execute()
-        return bool(res.data)
-    except Exception:
+        response = supabase.table("protected_numbers").select("*").eq("phone_number", phone_number).execute()
+        return len(response.data) > 0
+    except Exception as e:
+        print(f"Check protected number error: {e}")
         return False
 
-def is_telegram_protected(tg_id):
+def add_protected_number(phone_number, telegram_user_id=None):
     try:
-        res = supabase.table("protected_telegram_ids").select("telegram_id").eq("telegram_id", str(tg_id)).execute()
-        return bool(res.data)
-    except Exception:
-        return False
-
-def add_protected_number(mobile, name="Protected"):
-    try:
-        supabase.table("protected_numbers").insert({"mobile": str(mobile), "name": name, "created_at": datetime.now(timezone.utc).isoformat()}).execute()
+        supabase.table("protected_numbers").insert({
+            "phone_number": phone_number,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }).execute()
         return True
-    except Exception:
+    except Exception as e:
+        print(f"Add protected number error: {e}")
         return False
 
-def add_protected_telegram_id(tg_id, username="Protected"):
+def is_telegram_protected(telegram_id):
     try:
-        supabase.table("protected_telegram_ids").insert({"telegram_id": str(tg_id), "username": username, "created_at": datetime.now(timezone.utc).isoformat()}).execute()
-        return True
-    except Exception:
+        response = supabase.table("protected_telegrams").select("*").eq("telegram_id", str(telegram_id)).execute()
+        return len(response.data) > 0
+    except Exception as e:
+        print(f"Check protected telegram error: {e}")
         return False
 
-def get_plan_config(plan_id):
-    clean = str(plan_id or "").replace("plan_", "")
-    return PLAN_CONFIG.get(clean)
+def add_protected_telegram(telegram_id, telegram_user_id=None):
+    try:
+        supabase.table("protected_telegrams").insert({
+            "telegram_id": str(telegram_id),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }).execute()
+        return True
+    except Exception as e:
+        print(f"Add protected telegram error: {e}")
+        return False
 
-def record_search_for_daily_report(user_id, username, first_name, query, found=False, lookup_type="number", credits_used=0):
-    with daily_stats_lock:
-        if lookup_type not in daily_search_stats:
-            daily_search_stats[lookup_type] = []
-        daily_search_stats[lookup_type].append({
-            "timestamp": datetime.now(IST).isoformat(),
-            "user_id": user_id,
-            "username": f"@{username}" if username else str(first_name or "User"),
-            "query": query,
-            "found": found,
-            "credits_used": credits_used
-        })
+def get_cached_result(phone_number):
+    try:
+        response = supabase.table("search_results").select("*").eq("mobile_number", phone_number).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0].get('raw_data')
+        return None
+    except Exception as e:
+        print(f"Get cached result error: {e}")
+        return None
+
+def save_cached_result(phone_number, raw_data):
+    try:
+        existing = supabase.table("search_results").select("mobile_number").eq("mobile_number", phone_number).limit(1).execute()
+        if existing.data and len(existing.data) > 0:
+            supabase.table("search_results").update({"raw_data": raw_data}).eq("mobile_number", phone_number).execute()
+        else:
+            supabase.table("search_results").insert({
+                "mobile_number": phone_number,
+                "raw_data": raw_data,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }).execute()
+        return True
+    except Exception as e:
+        print(f"Save cached result error: {e}")
+        return False
+
+def ban_user(telegram_user_id):
+    try:
+        supabase.table("telegram_users").update({
+            "is_banned": True,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("telegram_user_id", telegram_user_id).execute()
+        return True
+    except Exception as e:
+        print(f"Ban user error: {e}")
+        return False
+
+def unban_user(telegram_user_id):
+    try:
+        supabase.table("telegram_users").update({
+            "is_banned": False,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("telegram_user_id", telegram_user_id).execute()
+        return True
+    except Exception as e:
+        print(f"Unban user error: {e}")
+        return False
+
+def get_stats():
+    try:
+        users_resp = supabase.table("telegram_users").select("*", count="exact").execute()
+        total_users = users_resp.count
+        
+        searches_resp = supabase.table("telegram_users").select("total_searches").execute()
+        total_searches = sum(u.get('total_searches', 0) for u in searches_resp.data)
+        
+        credits_resp = supabase.table("telegram_users").select("credits").execute()
+        total_credits = sum(u.get('credits', 0) for u in credits_resp.data)
+        
+        banned_resp = supabase.table("telegram_users").select("*", count="exact").eq("is_banned", True).execute()
+        banned_users = banned_resp.count
+        
+        pending_resp = supabase.table("payment_claims").select("*", count="exact").eq("status", "pending").execute()
+        pending_payments_count = pending_resp.count
+        
+        revenue_resp = supabase.table("payment_claims").select("amount").eq("status", "success").execute()
+        total_revenue = sum(p.get('amount', 0) for p in revenue_resp.data)
+        
+        cache_resp = supabase.table("search_results").select("*", count="exact").execute()
+        cache_size = cache_resp.count
+        
+        protected_resp = supabase.table("protected_numbers").select("*", count="exact").execute()
+        protected_count = protected_resp.count
+        
+        return {
+            'total_users': total_users or 0,
+            'total_searches': total_searches,
+            'total_credits': total_credits,
+            'banned_users': banned_users or 0,
+            'pending_payments': pending_payments_count or 0,
+            'total_revenue': total_revenue,
+            'cache_size': cache_size or 0,
+            'protected_count': protected_count or 0
+        }
+    except Exception as e:
+        print(f"Get stats error: {e}")
+        return {
+            'total_users': 0, 'total_searches': 0, 'total_credits': 0,
+            'banned_users': 0, 'pending_payments': 0, 'total_revenue': 0,
+            'cache_size': 0, 'protected_count': 0
+        }
+
+def get_all_users():
+    try:
+        response = supabase.table("telegram_users").select("telegram_user_id").eq("is_banned", False).execute()
+        return [row['telegram_user_id'] for row in response.data]
+    except Exception as e:
+        print(f"Get all users error: {e}")
+        return []
+
+def add_giveaway_credits(credits):
+    try:
+        users = get_all_users()
+        success_count = 0
+        for user_id in users:
+            add_credits(user_id, credits)
+            success_count += 1
+        return success_count, 0
+    except Exception as e:
+        print(f"Giveaway error: {e}")
+        return 0, 0
+
+def get_recent_transactions(limit=20):
+    try:
+        response = supabase.table("payment_claims").select("*").order("created_at", desc=True).limit(limit).execute()
+        return response.data
+    except Exception as e:
+        print(f"Get transactions error: {e}")
+        return []
+
+def activate_unlimited_plan(user_id, plan_id):
+    plan = UNLIMITED_PLANS.get(plan_id)
+    if not plan:
+        return False, "Invalid plan"
+    
+    now_dt = datetime.now(timezone.utc)
+    user = get_user(user_id)
+    current_expiry = user.get('unlimited_expiry') if user else None
+    
+    start_from = now_dt
+    if current_expiry:
+        try:
+            expiry_dt = datetime.fromisoformat(str(current_expiry).replace("Z", "+00:00"))
+            if expiry_dt > now_dt:
+                start_from = expiry_dt
+        except Exception:
+            pass
+    
+    new_expiry = start_from + timedelta(days=plan["days"])
+    supabase.table("telegram_users").update({
+        "unlimited_expiry": new_expiry.isoformat(),
+        "updated_at": now_dt.isoformat()
+    }).eq("telegram_user_id", user_id).execute()
+    
+    return True, new_expiry
+
+# ==================== TELEGRAM LOOKUP API ====================
+def call_telegram_lookup_api(username):
+    try:
+        if not username.startswith('@'):
+            username = '@' + username
+        
+        from urllib.parse import urlencode
+        url = f"{TELEGRAM_LOOKUP_API_URL}?{urlencode({'username': username})}"
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/6.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Connection": "close",
+        }
+        
+        response = requests.get(url, headers=headers, timeout=30)
+        
+        if response.status_code != 200:
+            return None, f"http_{response.status_code}"
+        
+        html_content = response.text
+        result = {}
+        
+        tg_id_match = re.search(r'🆔 Telegram ID:\s*<code>(\d+)</code>', html_content)
+        if tg_id_match:
+            result['telegram_id'] = tg_id_match.group(1)
+        
+        phone_match = re.search(r'📱 Phone Number:\s*<code>(\d+)</code>', html_content)
+        if phone_match:
+            result['phone_number'] = phone_match.group(1)
+        
+        username_match = re.search(r'👥 Username:\s*@([a-zA-Z0-9_]+)', html_content)
+        if username_match:
+            result['username'] = '@' + username_match.group(1)
+        
+        country_match = re.search(r'🌍 Country:\s*([A-Za-z\s]+)', html_content)
+        if country_match:
+            result['country'] = country_match.group(1).strip()
+        
+        cc_match = re.search(r'📞 Country Code:\s*\+(\d+)', html_content)
+        if cc_match:
+            result['country_code'] = '+' + cc_match.group(1)
+        
+        if result.get('telegram_id') or result.get('phone_number'):
+            return result, None
+        else:
+            no_data_markers = ["no data found", "not found", "no records", "no result", "data not found"]
+            if any(marker in html_content.lower() for marker in no_data_markers):
+                return {"error": "no_result"}, None
+            if html_content.strip():
+                return {"error": "no_result"}, None
+            return None, "empty_api_response"
+            
+    except requests.exceptions.Timeout:
+        return None, "timeout"
+    except Exception as e:
+        return None, f"exception_{e}"
+
+def format_telegram_lookup_result(result, username, user_id, unlimited_active=False, unlimited_expiry=None):
+    output = f"""
+🔍 *TELEGRAM LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Lookup Result for: `{username}`
+────────────────────────
+
+👥 Username: `{result.get('username', username)}`
+🆔 Telegram ID: `{result.get('telegram_id', 'N/A')}`
+📱 Phone Number: `{result.get('phone_number', 'N/A')}`
+🌍 Country: `{result.get('country', 'N/A')}`
+📞 Country Code: `{result.get('country_code', 'N/A')}`
+
+────────────────────────
+"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+💎 *Credits Used:* `{TELEGRAM_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+
+⚠️ Auto delete in {AUTO_DELETE_SECONDS} sec
+{footer()}
+"""
+    return output
+
+# ==================== LOOKUP RESULT FORMATTING ====================
+def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
+    if not isinstance(result, dict):
+        result = {}
+
+    parsed_results = []
+    api_results = result.get('results')
+    
+    if isinstance(api_results, dict):
+        def sort_key(item):
+            key = str(item[0])
+            m = re.search(r'\d+', key)
+            return int(m.group()) if m else 9999
+        for key, value in sorted(api_results.items(), key=sort_key):
+            if isinstance(value, dict):
+                parsed_results.append(value)
+            elif isinstance(value, list):
+                parsed_results.extend([v for v in value if isinstance(v, dict)])
+    elif isinstance(api_results, list):
+        parsed_results = [v for v in api_results if isinstance(v, dict)]
+
+    if not parsed_results:
+        direct_result_items = [(k, v) for k, v in result.items() if str(k).lower().startswith('result') and isinstance(v, dict)]
+        def sort_key2(item):
+            m = re.search(r'\d+', str(item[0]))
+            return int(m.group()) if m else 9999
+        for key, value in sorted(direct_result_items, key=sort_key2):
+            parsed_results.append(value)
+
+    if not parsed_results and ('name' in result or 'mobile' in result):
+        parsed_results = [result]
+
+    total_results_found = len(parsed_results)
+    parsed_results = parsed_results[:MAX_LOOKUP_RESULTS]
+    showing_text = f"\n📌 Showing: `{len(parsed_results)}` / `{total_results_found}`" if total_results_found > MAX_LOOKUP_RESULTS else ""
+    
+    output = f"""
+🔍 *NUMBER LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━
+
+📊 Total Results Found: `{total_results_found}`{showing_text}
+"""
+    
+    for idx, data in enumerate(parsed_results, 1):
+        name = data.get('name') or data.get('Name') or data.get('full_name') or 'N/A'
+        alt_mobile = data.get('alt_mobile') or data.get('alternate_mobile') or 'N/A'
+        father_name = data.get('father_name') or data.get('Father_Name') or 'N/A'
+        email = data.get('email') or data.get('Email') or 'N/A'
+        operator = data.get('operator') or data.get('Operator') or 'N/A'
+        circle = data.get('state_circle') or data.get('circle') or 'N/A'
+        address = data.get('address') or data.get('Address') or 'N/A'
+        mobile = data.get('mobile') or data.get('Mobile') or phone
+        
+        output += f"""
+
+━━━━━━━━━━━━━━━━━━
+📄 *RESULT {idx}*
+
+📱 Mobile: `{mobile}`
+📞 Alternate: `{alt_mobile if alt_mobile != 'NA' else 'N/A'}`
+👤 Name: `{name}`
+👨 Father: `{father_name if father_name != 'NA' else 'N/A'}`
+📧 Email: `{email if email not in ['n/a', 'NA'] else 'N/A'}`
+📡 Operator: `{operator if operator != 'NA' else 'N/A'}`
+📍 Circle: `{circle if circle != 'NA' else 'N/A'}`
+🏠 Address: `{address if address != 'NA' else 'N/A'}`"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+
+━━━━━━━━━━━━━━━━━━
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+
+━━━━━━━━━━━━━━━━━━
+💎 *Credits Used:* `{NUMBER_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+
+⚠️ Auto delete in {AUTO_DELETE_SECONDS} sec
+{footer()}
+"""
+    return output
 
 # ==================== LOOKUP PROCESSORS ====================
-def process_number_lookup(message):
+def process_lookup(message):
     user_id = message.from_user.id
     raw_phone = str(message.text or "").strip()
 
-    if raw_phone == "❌ CANCEL" or raw_phone == "/cancel":
+    if raw_phone == "/cancel":
         user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
 
     if user_states.get(user_id) != "awaiting_number":
@@ -692,41 +1026,120 @@ def process_number_lookup(message):
     phone = normalize_indian_mobile(raw_phone)
 
     if not phone:
-        bot.reply_to(message, "❌ *Invalid number!*\n\nEnter Indian mobile number.\nExamples: `9876543210` or `+919876543210`", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ *Invalid Number!*\n\nPlease enter a valid 10-digit mobile number.\nExample: `9876543210`", 
+                    reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
 
+    with active_number_sessions_lock:
+        if user_id in active_number_sessions:
+            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current result.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+            return
+        active_number_sessions.add(user_id)
+    
     if user_id in user_cooldown and time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
         wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-        bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        active_number_sessions.discard(user_id)
         return
-
+    
     user = get_user(user_id)
     total_credits = get_total_credits(user_id)
     unlimited_active, unlimited_expiry = get_active_unlimited(user)
-
+    
     if total_credits < NUMBER_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits.", 
-                    reply_markup=universal_markup(buy=True), parse_mode='Markdown')
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🛒 Buy Credits", callback_data="buy"))
+        markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu"))
+        bot.reply_to(message, f"❌ *Not enough credits!*\n\nNumber Lookup costs `{NUMBER_LOOKUP_COST}` credits.\n\nBuy more credits or get an unlimited plan.", 
+                    reply_markup=markup, parse_mode='Markdown')
+        active_number_sessions.discard(user_id)
         return
-
+    
     if is_number_protected(phone):
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🛡️ Protect My Number", callback_data="plan_protect_number"))
+        markup.add(InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu"))
         bot.reply_to(message, f"""
-🛡️ *PROTECTED NUMBER*
+🛡️ *Protected Number*
 
 📱 `{phone}`
 
 This number is protected. Details are hidden.
-""", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-        return
 
+You can also protect your number for ₹99!
+""", reply_markup=markup, parse_mode='Markdown')
+        active_number_sessions.discard(user_id)
+        return
+    
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching...*", parse_mode='Markdown')
+    
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    
+    cached_result = get_cached_result(phone)
+    
+    if cached_result and has_valid_number_results(cached_result):
+        if not unlimited_active:
+            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
+                bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                active_number_sessions.discard(user_id)
+                return
+        
+        increment_total_searches(user_id)
+        output = format_lookup_result(cached_result, phone, user_id, unlimited_active, unlimited_expiry)
+        
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("🔍 New Search", callback_data="lookup"),
+            InlineKeyboardButton("🏠 Menu", callback_data="main_menu")
+        )
+        markup.add(InlineKeyboardButton("📢 Join Group", url=GROUP_LINK))
+        
+        sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+        threading.Thread(target=auto_delete_sent_messages, args=(message.chat.id, sent_messages), daemon=True).start()
+        active_number_sessions.discard(user_id)
+        return
+    
+    result, api_error_reason = call_unstable_json_api(
+        {"key": LOOKUP_API_KEY, "service": LOOKUP_API_SERVICE, "number": phone},
+        lookup_type="number",
+        max_retries=5,
+        timeout=30
+    )
 
-    params = {"key": LOOKUP_API_KEY, "service": LOOKUP_API_SERVICE, "number": phone}
-    result, api_error = call_unstable_json_api(params, lookup_type="number")
+    if not result:
+        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="number")
+        notify_admin_api_issue("number", phone, api_error_reason)
+        active_number_sessions.discard(user_id)
+        return
 
-    if not result or not has_valid_number_results(result):
+    if has_valid_number_results(result):
+        if not unlimited_active:
+            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
+                bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                active_number_sessions.discard(user_id)
+                return
+        
+        increment_total_searches(user_id)
+        save_cached_result(phone, result)
+        output = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
+        
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("🔍 New Search", callback_data="lookup"),
+            InlineKeyboardButton("🏠 Menu", callback_data="main_menu")
+        )
+        markup.add(InlineKeyboardButton("📢 Join Group", url=GROUP_LINK))
+        
+        sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+        threading.Thread(target=auto_delete_sent_messages, args=(message.chat.id, sent_messages), daemon=True).start()
+        active_number_sessions.discard(user_id)
+    else:
+        increment_total_searches(user_id)
+        updated_total = get_total_credits(user_id)
         output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
@@ -735,1157 +1148,1231 @@ This number is protected. Details are hidden.
 
 🚫 No records available in database
 
-💎 *Credits Used:* `0`
-💎 *Credits Left:* `{get_total_credits(user_id)}`
+💡 Tips:
+• Check the number again
+• Try another number
+• Ensure it's a valid Indian mobile number
+
+━━━━━━━━━━━━━━━━━━
+💎 *Credits Used:* `0` (No deduction for no results)
+💎 *Credits Left:* `{updated_total}`
 {footer()}
 """
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
-        return
-
-    if not unlimited_active:
-        deduct_credits(user_id, NUMBER_LOOKUP_COST)
-    increment_total_searches(user_id)
-
-    output = f"""
-🔍 *NUMBER LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━
-
-📱 Number: `{phone}`
-"""
-    if "results" in result:
-        res_block = result["results"]
-        if isinstance(res_block, dict):
-            for k, v in res_block.items():
-                if isinstance(v, dict):
-                    output += f"""
-👤 Name: `{v.get('name', 'N/A')}`
-📡 Operator: `{v.get('operator', v.get('carrier', 'N/A'))}`
-📍 Circle: `{v.get('circle', v.get('state', 'N/A'))}`
-"""
-                    break
-
-    output += f"""
-━━━━━━━━━━━━━━━━━━
-💎 *Credits Used:* `{NUMBER_LOOKUP_COST if not unlimited_active else 0}`
-💎 *Credits Left:* `{get_total_credits(user_id)}`
-{footer()}
-"""
-    bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
+        active_number_sessions.discard(user_id)
 
 def process_telegram_lookup(message):
     user_id = message.from_user.id
     username_input = str(message.text or "").strip()
 
-    if username_input == "❌ CANCEL" or username_input == "/cancel":
+    if username_input == "/cancel":
         user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
 
     if user_states.get(user_id) != "awaiting_telegram_username":
         return
 
     user_states.pop(user_id, None)
-
-    if not username_input.startswith('@'):
-        username_input = '@' + username_input
-
-    if not re.match(r'^@?[a-zA-Z0-9_]{5,32}$', username_input[1:]):
-        bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nExamples: `@username` or `username`", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    
+    username_input = username_input.lstrip('@')
+    
+    if not re.match(r'^[a-zA-Z0-9_]{5,32}$', username_input):
+        bot.reply_to(message, "❌ *Invalid Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `5 credits` per search", 
+                    reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         return
-
+    
+    with active_telegram_sessions_lock:
+        if user_id in active_telegram_sessions:
+            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+            return
+        active_telegram_sessions.add(user_id)
+    
     if user_id in user_cooldown and time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
         wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-        bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        with active_telegram_sessions_lock:
+            active_telegram_sessions.discard(user_id)
         return
-
+    
     user = get_user(user_id)
     total_credits = get_total_credits(user_id)
     unlimited_active, unlimited_expiry = get_active_unlimited(user)
-
+    
     if total_credits < TELEGRAM_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Telegram Lookup costs `{TELEGRAM_LOOKUP_COST}` credits.", 
-                    reply_markup=universal_markup(buy=True), parse_mode='Markdown')
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🛒 Buy Credits", callback_data="buy"))
+        markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu"))
+        bot.reply_to(message, f"❌ *Not enough credits!*\n\nTelegram Lookup costs `{TELEGRAM_LOOKUP_COST}` credits.\n\nBuy more credits or get an unlimited plan.", 
+                    reply_markup=markup, parse_mode='Markdown')
+        with active_telegram_sessions_lock:
+            active_telegram_sessions.discard(user_id)
         return
-
+    
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Telegram...*", parse_mode='Markdown')
-
-    result, api_error = call_telegram_lookup_api(username_input)
-
-    if not result or result.get("error") == "no_result":
+    
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Telegram..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Telegram...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    
+    result, api_error_reason = call_telegram_lookup_api(username_input)
+    
+    if not result:
+        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="telegram")
+        notify_admin_api_issue("telegram_lookup", username_input, api_error_reason)
+        with active_telegram_sessions_lock:
+            active_telegram_sessions.discard(user_id)
+        return
+    
+    if result.get("error") == "no_result" or not result.get("telegram_id"):
+        increment_total_searches(user_id)
+        updated_total = get_total_credits(user_id)
         output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
 
-🔍 Username: `{username_input}`
+🔍 Username: `@{username_input}`
 
 🚫 No records available in database
 
-💎 *Credits Used:* `0`
-💎 *Credits Left:* `{get_total_credits(user_id)}`
+💡 Tips:
+• Check the username again
+• Try another username
+• Ensure the username is correct
+
+━━━━━━━━━━━━━━━━━━
+💎 *Credits Used:* `0` (No deduction for no results)
+💎 *Credits Left:* `{updated_total}`
 {footer()}
 """
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
+        with active_telegram_sessions_lock:
+            active_telegram_sessions.discard(user_id)
         return
-
-    if not unlimited_active:
-        deduct_credits(user_id, TELEGRAM_LOOKUP_COST)
-    increment_total_searches(user_id)
-
-    html_content = result.get("html_content", "")
     
-    tg_id_match = re.search(r'🆔 Telegram ID:\s*<code>(\d+)</code>', html_content)
-    phone_match = re.search(r'📱 Phone Number:\s*<code>(\d+)</code>', html_content)
-    country_match = re.search(r'🌍 Country:\s*([A-Za-z\s]+)', html_content)
-    cc_match = re.search(r'📞 Country Code:\s*\+(\d+)', html_content)
-
-    output = f"""
-🔍 *TELEGRAM LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Lookup Result for: `{username_input}`
-────────────────────────
-
-👥 Username: `{username_input}`
-🆔 Telegram ID: `{tg_id_match.group(1) if tg_id_match else 'N/A'}`
-📱 Phone Number: `{phone_match.group(1) if phone_match else 'N/A'}`
-🌍 Country: `{country_match.group(1).strip() if country_match else 'N/A'}`
-📞 Country Code: `{'+' + cc_match.group(1) if cc_match else 'N/A'}`
-
-────────────────────────
-💎 *Credits Used:* `{TELEGRAM_LOOKUP_COST if not unlimited_active else 0}`
-💎 *Credits Left:* `{get_total_credits(user_id)}`
-{footer()}
-"""
-    bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=True, lookup_type="telegram", credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0)
-
-def process_identity_lookup(message):
-    user_id = message.from_user.id
-    aadhar_input = str(message.text or "").strip()
-
-    if aadhar_input == "❌ CANCEL" or aadhar_input == "/cancel":
-        user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-        return
-
-    if user_states.get(user_id) != "awaiting_identity":
-        return
-
-    user_states.pop(user_id, None)
-    aadhar = normalize_aadhar(aadhar_input)
-
-    if not aadhar:
-        bot.reply_to(message, "❌ *Invalid Aadhar Number!*\n\nEnter 12-digit Aadhar number.\nExample: `962397300673`", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
-        return
-
-    if user_id in user_cooldown and time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
-        wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-        bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-        return
-
-    user = get_user(user_id)
-    total_credits = get_total_credits(user_id)
-    unlimited_active, unlimited_expiry = get_active_unlimited(user)
-
-    if total_credits < IDENTITY_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Identity Lookup costs `{IDENTITY_LOOKUP_COST}` credits.", 
-                    reply_markup=universal_markup(buy=True), parse_mode='Markdown')
-        return
-
-    user_cooldown[user_id] = time.time()
-    loading_msg = bot.reply_to(message, "🔍 *Searching Identity Records...*", parse_mode='Markdown')
-
-    result, api_error = call_identity_lookup_api(aadhar)
-
-    if not result or result.get("error") == "no_result":
+    telegram_id = result.get('telegram_id')
+    if telegram_id and is_telegram_protected(telegram_id):
         output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
+🛡️ *PROTECTED TELEGRAM ID*
 
-🆔 Aadhar: `{aadhar}`
+🔍 Username: `@{username_input}`
+🆔 Telegram ID: `{telegram_id}`
 
-🚫 No records available in database
+This Telegram ID is protected. Details are hidden.
 
-💎 *Credits Used:* `0`
-💎 *Credits Left:* `{get_total_credits(user_id)}`
-{footer()}
+You can also protect your Telegram ID for ₹99!
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, aadhar, found=False, lookup_type="identity", credits_used=0)
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🛡️ Protect My Telegram", callback_data="plan_protect_telegram"))
+        markup.add(InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu"))
+        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, reply_markup=markup, parse_mode='Markdown')
+        with active_telegram_sessions_lock:
+            active_telegram_sessions.discard(user_id)
         return
-
-    if not unlimited_active:
-        deduct_credits(user_id, IDENTITY_LOOKUP_COST)
-    increment_total_searches(user_id)
-
-    html_content = result.get("html_content", "")
     
-    output = f"""
-🆔 *IDENTITY LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━
-
-{html_content}
-
-━━━━━━━━━━━━━━━━━━
-💎 *Credits Used:* `{IDENTITY_LOOKUP_COST if not unlimited_active else 0}`
-💎 *Credits Left:* `{get_total_credits(user_id)}`
-{footer()}
-"""
-    bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, aadhar, found=True, lookup_type="identity", credits_used=IDENTITY_LOOKUP_COST if not unlimited_active else 0)
-
-def process_ifsc_lookup(message):
-    user_id = message.from_user.id
-    ifsc_input = str(message.text or "").strip().upper()
-
-    if ifsc_input == "❌ CANCEL" or ifsc_input == "/cancel":
-        user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-        return
-
-    if user_states.get(user_id) != "awaiting_ifsc":
-        return
-
-    user_states.pop(user_id, None)
-    ifsc = normalize_ifsc(ifsc_input)
-
-    if not ifsc:
-        bot.reply_to(message, "❌ *Invalid IFSC Code!*\n\nEnter valid IFSC code.\nExample: `HDFC0001325`", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
-        return
-
-    if user_id in user_cooldown and time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
-        wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-        bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-        return
-
-    user = get_user(user_id)
-    total_credits = get_total_credits(user_id)
-    unlimited_active, unlimited_expiry = get_active_unlimited(user)
-
-    if total_credits < IFSC_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* IFSC Lookup costs `{IFSC_LOOKUP_COST}` credits.", 
-                    reply_markup=universal_markup(buy=True), parse_mode='Markdown')
-        return
-
-    user_cooldown[user_id] = time.time()
-    loading_msg = bot.reply_to(message, "🔍 *Searching Bank Details...*", parse_mode='Markdown')
-
-    result, api_error = call_ifsc_lookup_api(ifsc)
-
-    if not result or result.get("error") == "no_result":
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🏦 IFSC Code: `{ifsc}`
-
-🚫 No records available in database
-
-💎 *Credits Used:* `0`
-💎 *Credits Left:* `{get_total_credits(user_id)}`
-{footer()}
-"""
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, ifsc, found=False, lookup_type="ifsc", credits_used=0)
-        return
-
     if not unlimited_active:
-        deduct_credits(user_id, IFSC_LOOKUP_COST)
-    increment_total_searches(user_id)
-
-    html_content = result.get("html_content", "")
+        if not deduct_credits(user_id, TELEGRAM_LOOKUP_COST):
+            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            with active_telegram_sessions_lock:
+                active_telegram_sessions.discard(user_id)
+            return
     
-    output = f"""
-🏦 *IFSC LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━
+    increment_total_searches(user_id)
+    output = format_telegram_lookup_result(result, f"@{username_input}", user_id, unlimited_active, unlimited_expiry)
+    
+    markup = telegram_lookup_protection_markup()
+    sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    threading.Thread(target=auto_delete_sent_messages, args=(message.chat.id, sent_messages), daemon=True).start()
+    
+    with active_telegram_sessions_lock:
+        active_telegram_sessions.discard(user_id)
 
-{html_content}
+# ==================== PAYMENT FUNCTIONS ====================
+def get_plan_config(plan_id):
+    return PLAN_CONFIG.get(str(plan_id or "").strip())
 
-━━━━━━━━━━━━━━━━━━
-💎 *Credits Used:* `{IFSC_LOOKUP_COST if not unlimited_active else 0}`
-💎 *Credits Left:* `{get_total_credits(user_id)}`
-{footer()}
-"""
-    bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, ifsc, found=True, lookup_type="ifsc", credits_used=IFSC_LOOKUP_COST if not unlimited_active else 0)
+def create_manual_payment_claim(plan_id, telegram_user_id, telegram_username, protected_number=None):
+    try:
+        plan = get_plan_config(plan_id)
+        if not plan:
+            return None
 
-# ==================== API CALLER FOR NUMBER LOOKUP ====================
-def call_unstable_json_api(params, lookup_type="number", max_retries=5, timeout=30):
-    base_url = str(LOOKUP_API_URL or "").strip()
-    clean_params = {str(k): str(v).strip() for k, v in (params or {}).items() if v is not None}
+        tx_code = "TX" + uuid.uuid4().hex[:16].upper()
+        now = datetime.now(timezone.utc).isoformat()
 
-    headers_attempts = [
-        {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/6.1",
-            "Accept": "application/json,text/plain,*/*",
-            "Connection": "close",
-        },
-        {
-            "User-Agent": "python-requests TraceXBot/6.1",
-            "Accept": "application/json,text/plain,*/*",
-            "Connection": "close",
-        },
-    ]
+        payload = {
+            "payment_id": tx_code,
+            "cashfree_order_id": tx_code,
+            "session_id": tx_code,
+            "telegram_user_id": str(telegram_user_id),
+            "telegram_username": str(telegram_username or "no_username"),
+            "plan_id": plan_id,
+            "amount": plan["amount"],
+            "credits": plan.get("credits", 0),
+            "payment_source": "manual_qr",
+            "payment_for": "credits" if plan_id in CREDIT_PLANS else "unlimited" if plan_id in UNLIMITED_PLANS else "protect_number" if plan_id == "protect_number" else "protect_telegram" if plan_id == "protect_telegram" else "bot_booking",
+            "protected_number": protected_number,
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+            "raw_response": {"mode": "manual_static_qr", "note": "Admin must verify manually."}
+        }
 
-    last_error = "unknown"
-    for attempt in range(1, int(max_retries or 5) + 1):
-        headers = headers_attempts[(attempt - 1) % len(headers_attempts)]
-        try:
-            response = requests.get(base_url, params=clean_params, headers=headers, timeout=timeout)
-            raw_preview = (response.text or "")[:500].replace("\n", " ")
+        supabase.table("payment_claims").insert(payload).execute()
+        return tx_code
+    except Exception as e:
+        print(f"Create manual payment claim error: {e}")
+        return None
 
-            print(f"[{lookup_type.upper()} API] Try {attempt}/{max_retries} | HTTP {response.status_code}")
+def fulfill_manual_claim(claim):
+    try:
+        telegram_user_id = claim.get("telegram_user_id")
+        plan_id = claim.get("plan_id")
+        plan = get_plan_config(plan_id)
 
-            if response.status_code in (429, 500, 502, 503, 504, 520, 521, 522, 523, 524):
-                last_error = f"temporary_http_{response.status_code}"
-                time.sleep(min(2 * attempt, 8))
-                continue
+        if not telegram_user_id or not plan:
+            return False, "Invalid claim data"
 
-            if response.status_code != 200:
-                last_error = f"http_{response.status_code}"
-                time.sleep(min(2 * attempt, 8))
-                continue
+        if plan_id in CREDIT_PLANS:
+            credits = int(claim.get("credits") or plan.get("credits") or 0)
+            if credits <= 0:
+                return False, "No credits in this plan"
+            new_total = add_credits(int(telegram_user_id), credits)
+            return True, f"Added {credits} credits. New total: {new_total}"
 
-            if raw_preview.lstrip().lower().startswith("<!doctype") or "<html" in raw_preview.lower():
-                last_error = "html_non_json_response"
-                time.sleep(min(2 * attempt, 8))
-                continue
+        if plan_id in UNLIMITED_PLANS:
+            ok, expiry = activate_unlimited_plan(int(telegram_user_id), plan_id)
+            if not ok:
+                return False, "Failed to activate unlimited plan"
+            return True, f"Unlimited plan activated until {expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
+        if plan_id == "protect_number":
+            number = claim.get("protected_number")
+            if not number:
+                return False, "Protected number missing"
+            if not is_number_protected(number):
+                add_protected_number(number, int(telegram_user_id))
+            return True, f"Number {number} is now protected"
+
+        if plan_id == "protect_telegram":
+            telegram_id = claim.get("protected_number")
+            if not telegram_id:
+                return False, "Telegram ID missing"
+            if not is_telegram_protected(telegram_id):
+                add_protected_telegram(telegram_id, int(telegram_user_id))
+            return True, f"Telegram ID {telegram_id} is now protected"
+
+        if plan_id == "bot_booking":
+            return True, "Bot booking confirmed. Delivery: 24-48 hours after requirements."
+
+        return False, "Unknown payment type"
+    except Exception as e:
+        print(f"Fulfill manual claim error: {e}")
+        return False, str(e)
+
+def manual_verify_payment(tx_code, admin_id=None):
+    try:
+        tx_code = str(tx_code or "").strip()
+
+        claim_resp = None
+        for field in ["session_id", "payment_id", "cashfree_order_id"]:
             try:
-                data = response.json()
-            except Exception as json_error:
-                last_error = f"json_parse_failed_{json_error}"
-                time.sleep(min(2 * attempt, 8))
-                continue
+                claim_resp = supabase.table("payment_claims").select("*").eq(field, tx_code).limit(1).execute()
+                if claim_resp.data:
+                    break
+            except Exception:
+                pass
 
-            if not isinstance(data, dict):
-                last_error = "json_not_object"
-                time.sleep(min(2 * attempt, 8))
-                continue
+        if not claim_resp or not claim_resp.data:
+            return False, "Transaction not found"
 
-            return data, None
+        claim = claim_resp.data[0]
+        if str(claim.get("status") or "").lower() == "success":
+            return False, "Already verified"
 
-        except requests.exceptions.Timeout:
-            last_error = "timeout"
-            print(f"[{lookup_type.upper()} API] Timeout on try {attempt}")
-            time.sleep(min(2 * attempt, 8))
-        except requests.exceptions.ConnectionError as conn_error:
-            last_error = f"connection_error_{conn_error}"
-            print(f"[{lookup_type.upper()} API] Connection error on try {attempt}")
-            time.sleep(min(2 * attempt, 8))
-        except Exception as api_error:
-            last_error = f"exception_{api_error}"
-            print(f"[{lookup_type.upper()} API] Error on try {attempt}")
-            time.sleep(min(2 * attempt, 8))
+        ok, detail = fulfill_manual_claim(claim)
+        if not ok:
+            return False, detail
 
-    print(f"[{lookup_type.upper()} API] FINAL FAILED after {max_retries} tries: {last_error}")
-    return None, last_error
+        now = datetime.now(timezone.utc).isoformat()
+        supabase.table("payment_claims").update({
+            "status": "success",
+            "updated_at": now,
+            "raw_response": {"mode": "manual_static_qr", "verified_by": str(admin_id or ADMIN_ID), "verified_at": now, "detail": detail}
+        }).eq("id", claim.get("id")).execute()
 
-def has_valid_number_results(result):
-    if not isinstance(result, dict):
-        return False
-    api_results = result.get("results")
-    if isinstance(api_results, dict):
-        return any(isinstance(v, dict) for v in api_results.values())
-    if isinstance(api_results, list):
-        return any(isinstance(v, dict) for v in api_results)
-    return ("name" in result or "mobile" in result)
+        telegram_user_id = int(claim.get("telegram_user_id"))
+        try:
+            bot.send_message(telegram_user_id, f"✅ *Payment Verified!*\n\n{detail}\n\n🧾 TX: `{tx_code}`\n\nUse /start to continue.", parse_mode="Markdown")
+        except Exception:
+            pass
 
-# ==================== BOT HANDLERS ====================
-@bot.message_handler(commands=['start', 'menu'])
-def start_handler(message):
-    if MAINTENANCE_MODE and message.from_user.id != ADMIN_ID:
+        try:
+            bot.send_message(ADMIN_CHANNEL_ID, f"✅ *MANUAL PAYMENT VERIFIED*\n━━━━━━━━━━━━━━━━\n👤 User: `{telegram_user_id}`\n📦 Plan: `{claim.get('plan_id')}`\n💰 Amount: ₹{claim.get('amount')}\n🧾 TX: `{tx_code}`", parse_mode="Markdown")
+        except Exception:
+            pass
+
+        return True, detail
+    except Exception as e:
+        print(f"Manual verify error: {e}")
+        return False, str(e)
+
+def manual_reject_payment(tx_code, admin_id=None, reason="Payment not confirmed"):
+    try:
+        tx_code = str(tx_code or "").strip()
+        claim_resp = None
+        for field in ["session_id", "payment_id", "cashfree_order_id"]:
+            try:
+                claim_resp = supabase.table("payment_claims").select("*").eq(field, tx_code).limit(1).execute()
+                if claim_resp.data:
+                    break
+            except Exception:
+                pass
+
+        if not claim_resp or not claim_resp.data:
+            return False, "Transaction not found"
+
+        claim = claim_resp.data[0]
+        status = str(claim.get("status") or "").lower()
+        if status == "success":
+            return False, "Already verified, cannot reject"
+        if status == "rejected":
+            return False, "Already rejected"
+
+        now = datetime.now(timezone.utc).isoformat()
+        supabase.table("payment_claims").update({
+            "status": "rejected",
+            "updated_at": now,
+            "raw_response": {"mode": "manual_static_qr", "rejected_by": str(admin_id or ADMIN_ID), "rejected_at": now, "reason": reason}
+        }).eq("id", claim.get("id")).execute()
+
+        telegram_user_id = int(claim.get("telegram_user_id"))
+        try:
+            bot.send_message(telegram_user_id, f"❌ *Payment Rejected*\n\n🧾 TX: `{tx_code}`\nReason: `{reason}`\n\nContact admin: {ADMIN_USERNAME}", parse_mode="Markdown")
+        except Exception:
+            pass
+
+        return True, "Payment rejected"
+    except Exception as e:
+        print(f"Manual reject error: {e}")
+        return False, str(e)
+
+def get_manual_claim_status(tx_code):
+    try:
+        tx_code = str(tx_code or "").strip()
+        for field in ["session_id", "payment_id", "cashfree_order_id"]:
+            try:
+                resp = supabase.table("payment_claims").select("status").eq(field, tx_code).limit(1).execute()
+                if resp.data:
+                    return str(resp.data[0].get("status") or "").lower()
+            except Exception:
+                pass
+        return None
+    except Exception:
+        return None
+
+def payment_session_reminder_worker(chat_id, user_id, tx_code, plan_label):
+    try:
+        time.sleep(60)
+        if get_manual_claim_status(tx_code) == "pending":
+            bot.send_message(chat_id, f"⏰ *Payment Reminder - 2 minutes left!*\n\n🧾 TX: `{tx_code}`\n\nPlease complete payment within 2 minutes.", parse_mode="Markdown")
+
+        time.sleep(60)
+        if get_manual_claim_status(tx_code) == "pending":
+            bot.send_message(chat_id, f"⚠️ *LAST CALL - 1 minute remaining!*\n\n🧾 TX: `{tx_code}`\n\nTransaction will be cancelled automatically.", parse_mode="Markdown")
+
+        time.sleep(60)
+        if get_manual_claim_status(tx_code) == "pending":
+            ok, msg = manual_reject_payment(tx_code, ADMIN_ID, reason="Payment session expired - 3 minutes timeout")
+            if ok:
+                bot.send_message(chat_id, f"❌ *Payment Session Expired*\n\n🧾 TX: `{tx_code}`\nReason: Transaction not completed within 3 minutes.\n\nYou can create a new session by selecting the plan again.", reply_markup=credit_packs_markup(), parse_mode="Markdown")
+    except Exception as e:
+        print(f"Payment reminder error: {e}")
+
+def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number=None):
+    plan = get_plan_config(plan_id)
+    if not plan:
+        bot.send_message(chat_id, "❌ Invalid plan selected.", reply_markup=main_menu_markup(user_id))
         return
-    user_id = message.from_user.id
-    user_states.pop(user_id, None)
 
-    if not is_channel_member(user_id):
-        send_join_required(message.chat.id)
+    now_ts = time.time()
+    last_ts = payment_session_cooldown.get(user_id, 0)
+    if now_ts - last_ts < PAYMENT_SESSION_COOLDOWN_SECONDS:
+        remaining = int(PAYMENT_SESSION_COOLDOWN_SECONDS - (now_ts - last_ts))
+        bot.send_message(chat_id, f"⏳ *Please wait {remaining} seconds* before creating another payment session.", reply_markup=main_menu_markup(user_id), parse_mode="Markdown")
+        return
+    payment_session_cooldown[user_id] = now_ts
+
+    tx_code = create_manual_payment_claim(plan_id, user_id, username, protected_number)
+    if not tx_code:
+        bot.send_message(chat_id, f"❌ Could not create payment record. Contact {ADMIN_USERNAME}.", parse_mode="Markdown")
         return
 
-    user = get_user(user_id)
-    total_credits = get_total_credits(user_id)
-    unlimited_active, unlimited_expiry = get_active_unlimited(user)
-
-    welcome = header("TRACEX PLATFORM", "🔥")
-    welcome += f"Welcome *{message.from_user.first_name or 'User'}*!\n\n"
-    welcome += f"💎 Credits: `{total_credits}`\n"
-    if unlimited_active:
-        welcome += f"🚀 Unlimited Active until `{unlimited_expiry[:16]}`\n"
-    welcome += f"🔎 Total Searches: `{user.get('total_searches', 0) if user else 0}`\n\n"
-    welcome += "Select an option from the buttons below:"
-    welcome += footer()
-
-    bot.send_message(message.chat.id, welcome, reply_markup=get_main_keyboard(), parse_mode='Markdown', disable_web_page_preview=True)
-
-@bot.message_handler(commands=['cancel'])
-def cancel_command(message):
-    user_id = message.from_user.id
-    user_states.pop(user_id, None)
-    bot.reply_to(message, "❌ Cancelled. Use /start for main menu.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-
-@bot.message_handler(func=lambda message: True)
-def handle_text_messages(message):
-    user_id = message.from_user.id
-    text = message.text.strip()
-
-    if MAINTENANCE_MODE and user_id != ADMIN_ID:
-        bot.reply_to(message, MAINTENANCE_MESSAGE, parse_mode='Markdown')
-        return
-
-    if not is_channel_member(user_id) and user_id != ADMIN_ID:
-        send_join_required(message.chat.id)
-        return
-
-    if user_states.get(user_id) == "awaiting_number":
-        process_number_lookup(message)
-        return
-    elif user_states.get(user_id) == "awaiting_telegram_username":
-        process_telegram_lookup(message)
-        return
-    elif user_states.get(user_id) == "awaiting_identity":
-        process_identity_lookup(message)
-        return
-    elif user_states.get(user_id) == "awaiting_ifsc":
-        process_ifsc_lookup(message)
-        return
-
-    if text == "📱 NUMBER LOOKUP":
-        user_states[user_id] = "awaiting_number"
-        bot.reply_to(message, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `5 credits`\nType ❌ CANCEL to abort", 
-                    reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
-    
-    elif text == "💬 TELEGRAM LOOKUP":
-        user_states[user_id] = "awaiting_telegram_username"
-        bot.reply_to(message, "💬 *Enter Telegram Username:*\n\n`Example: @username`\n\n💎 Cost: `12 credits`\nType ❌ CANCEL to abort", 
-                    reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
-    
-    elif text == "🆔 IDENTITY LOOKUP":
-        user_states[user_id] = "awaiting_identity"
-        bot.reply_to(message, "🆔 *Enter 12-digit Aadhar Number:*\n\n`Example: 962397300673`\n\n💎 Cost: `15 credits`\nType ❌ CANCEL to abort", 
-                    reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
-    
-    elif text == "🏦 IFSC LOOKUP":
-        user_states[user_id] = "awaiting_ifsc"
-        bot.reply_to(message, "🏦 *Enter IFSC Code:*\n\n`Example: HDFC0001325`\n\n💎 Cost: `20 credits`\nType ❌ CANCEL to abort", 
-                    reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
-    
-    elif text == "💎 MY CREDITS":
-        user = get_user(user_id)
-        total_credits = get_total_credits(user_id)
-        unlimited_active, unlimited_expiry = get_active_unlimited(user)
-        
-        info = header("CREDITS", "💎")
-        info += f"User ID: `{user_id}`\n"
-        info += f"Credits: `{total_credits}`\n"
-        if unlimited_active:
-            info += f"🚀 Unlimited Active until `{unlimited_expiry[:16]}`\n"
-        info += f"Total Searches: `{user.get('total_searches', 0) if user else 0}`\n"
-        info += footer()
-        bot.reply_to(message, info, reply_markup=get_back_keyboard(), parse_mode='Markdown')
-    
-    elif text == "🛒 BUY CREDITS":
-        packs_msg = f"""
-💎 *CREDIT STORE*
+    extra = f"\n📱 Number: `{protected_number}`" if protected_number else ""
+    caption = f"""
+💳 *Scan & Pay*
 ━━━━━━━━━━━━━━━━━━
+💰 Amount: ₹{plan['amount']}
+📦 Plan: `{plan['label']}`{extra}
+🧾 TX ID: `{tx_code}`
 
-💰 *CREDIT PACKS*
-• 40 Credits → ₹20  
-• 120 Credits → ₹50
-• 400 Credits → ₹100
+⏰ *You have 3 minutes to complete this transaction!*
 
-🚀 *UNLIMITED PLANS*
-• 1 Day Unlimited → ₹50
-• 7 Days Unlimited → ₹250
-• 30 Days Unlimited → ₹800
+✅ Pay exactly ₹{plan['amount']} on this QR.
+📩 After payment, tap below and send screenshot here.
 
-🛡️ *PROTECTION*
-• Number Protection → ₹99
-• Telegram Protection → ₹99
-
-{footer()}
+━━━━━━━━━━━━━━━━━━
+📞 Admin: {ADMIN_USERNAME}
 """
-        bot.reply_to(message, packs_msg, reply_markup=credit_packs_markup(), parse_mode='Markdown')
-    
-    elif text == "🛡️ PROTECTION":
-        prot_msg = f"""
+
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("📸 Send Payment Screenshot", callback_data=f"submitproof_{tx_code}"))
+    markup.add(InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu"))
+
+    qr_path = PAYMENT_QR_IMAGE
+    if not os.path.isabs(qr_path):
+        qr_path = os.path.join(os.getcwd(), qr_path)
+
+    try:
+        if os.path.exists(qr_path):
+            with open(qr_path, "rb") as img:
+                bot.send_photo(chat_id, img, caption=caption, reply_markup=markup, parse_mode="Markdown")
+        else:
+            bot.send_message(chat_id, caption + "\n⚠️ QR image missing.", reply_markup=markup, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Send QR failed: {e}")
+        bot.send_message(chat_id, caption, reply_markup=markup, parse_mode="Markdown")
+
+    threading.Thread(target=payment_session_reminder_worker, args=(chat_id, user_id, tx_code, plan.get("label", plan_id)), daemon=True).start()
+
+# ==================== ADMIN FUNCTIONS ====================
+def show_admin_panel(message):
+    stats = get_stats()
+    admin_msg = f"""
+*🛠 ADMIN PANEL*
+━━━━━━━━━━━━━━━━━━
+👥 Users: `{stats['total_users']}`
+🔍 Searches: `{stats['total_searches']}`
+💎 Credits: `{stats['total_credits']}`
+💰 Revenue: ₹{stats['total_revenue']}
+⏳ Pending: `{stats['pending_payments']}`
+🚫 Banned: `{stats['banned_users']}`
+💾 Cache: `{stats['cache_size']}`
+🛡️ Protected: `{stats['protected_count']}`
+━━━━━━━━━━━━━━━━━━
+📅 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
+"""
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("➕ Add Credits", callback_data="admin_add"),
+        InlineKeyboardButton("➖ Remove Credits", callback_data="admin_remove")
+    )
+    markup.add(
+        InlineKeyboardButton("🚫 Ban User", callback_data="admin_ban"),
+        InlineKeyboardButton("✅ Unban User", callback_data="admin_unban")
+    )
+    markup.add(
+        InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
+        InlineKeyboardButton("🎁 Giveaway", callback_data="admin_giveaway")
+    )
+    markup.add(
+        InlineKeyboardButton("📊 Stats", callback_data="admin_stats"),
+        InlineKeyboardButton("📋 Transactions", callback_data="admin_transactions")
+    )
+    markup.add(InlineKeyboardButton("🔙 Back", callback_data="main_menu"))
+    bot.send_message(message.chat.id, admin_msg, reply_markup=markup, parse_mode='Markdown')
+
+def show_admin_stats(message):
+    stats = get_stats()
+    stats_msg = f"""
+*📊 DETAILED STATS*
+━━━━━━━━━━━━━━━━━━
+👥 Users: `{stats['total_users']}`
+🚫 Banned: `{stats['banned_users']}`
+✅ Active: `{stats['total_users'] - stats['banned_users']}`
+━━━━━━━━━━━━━━━━━━
+💎 Total Credits: `{stats['total_credits']}`
+━━━━━━━━━━━━━━━━━━
+🔍 Searches: `{stats['total_searches']}`
+💾 Cache: `{stats['cache_size']}`
+🛡️ Protected: `{stats['protected_count']}`
+━━━━━━━━━━━━━━━━━━
+💰 Revenue: ₹{stats['total_revenue']}
+⏳ Pending: `{stats['pending_payments']}`
+━━━━━━━━━━━━━━━━━━
+📅 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
+"""
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🔙 Back", callback_data="admin_back"))
+    bot.send_message(message.chat.id, stats_msg, reply_markup=markup, parse_mode='Markdown')
+
+def show_admin_transactions(message):
+    transactions = get_recent_transactions()
+    if not transactions:
+        trans_msg = "📋 *No transactions found!*"
+    else:
+        trans_msg = "*📋 RECENT TRANSACTIONS*\n\n"
+        for trans in transactions:
+            status_emoji = "✅" if trans.get('status') == "success" else "⏳" if trans.get('status') == "pending" else "❌"
+            trans_msg += f"{status_emoji} `{trans.get('payment_id', '')[:20]}` | User: `{trans.get('telegram_user_id', '')}` | ₹{trans.get('amount', 0)} | {trans.get('plan_id', '')}\n"
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🔙 Back", callback_data="admin_back"))
+    bot.send_message(message.chat.id, trans_msg, reply_markup=markup, parse_mode='Markdown')
+
+def process_admin_add(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    user_states.pop(user_id, None)
+    if message.text == "/cancel":
+        bot.reply_to(message, "Cancelled", reply_markup=main_menu_markup(user_id))
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            raise ValueError("Missing values")
+        target_user, target_row = resolve_user_identifier(parts[0])
+        if not target_user:
+            bot.reply_to(message, "❌ User not found.", parse_mode='Markdown')
+            return
+        value = parts[1].strip().lower()
+
+        if value in ["u1w", "u1m"]:
+            ok, new_expiry = activate_unlimited_plan(target_user, value)
+            if not ok:
+                bot.reply_to(message, "❌ Invalid plan.", parse_mode='Markdown')
+                return
+            label = UNLIMITED_PLANS[value]["label"]
+            bot.reply_to(message, f"✅ Added `{label}` to `{target_user}`\nExpires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`", parse_mode='Markdown')
+            try:
+                bot.send_message(target_user, f"🚀 *Unlimited Plan Added!*\nPlan: `{label}`\nExpires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`", parse_mode='Markdown')
+            except Exception:
+                pass
+            return
+
+        credits = int(value)
+        new_total = add_credits(target_user, credits)
+        bot.reply_to(message, f"✅ Added {credits} credits to `{target_user}`\nNew total: `{new_total}`", parse_mode='Markdown')
+        try:
+            bot.send_message(target_user, f"✅ *{credits} credits added!*\nNew total: `{new_total}`", parse_mode='Markdown')
+        except Exception:
+            pass
+    except Exception:
+        bot.reply_to(message, "❌ Invalid format!\nCredits: `user_id/@username credits`\nUnlimited: `user_id/@username u1w/u1m`", parse_mode='Markdown')
+
+def process_admin_remove(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    user_states.pop(user_id, None)
+    if message.text == "/cancel":
+        bot.reply_to(message, "Cancelled", reply_markup=main_menu_markup(user_id))
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            raise ValueError("Missing values")
+        target_user, user = resolve_user_identifier(parts[0])
+        if not target_user or not user:
+            bot.reply_to(message, "❌ User not found.", parse_mode='Markdown')
+            return
+        action = parts[1].strip().lower()
+        if action in ["unlimited", "deactivate", "off", "u0", "remove_unlimited"]:
+            supabase.table("telegram_users").update({
+                "unlimited_expiry": None,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("telegram_user_id", target_user).execute()
+            bot.reply_to(message, f"✅ Unlimited plan deactivated for `{target_user}`", parse_mode='Markdown')
+            try:
+                bot.send_message(target_user, f"🧨 *Unlimited Plan Deactivated*\n\nYour unlimited access has been removed.", parse_mode='Markdown')
+            except Exception:
+                pass
+            return
+        credits = int(action)
+        current_credits = int(user.get('credits', 0) or 0)
+        new_credits = max(0, current_credits - credits)
+        supabase.table("telegram_users").update({"credits": new_credits, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("telegram_user_id", target_user).execute()
+        bot.reply_to(message, f"✅ Removed {credits} credits from `{target_user}`\nNew total: `{new_credits}`", parse_mode='Markdown')
+    except Exception:
+        bot.reply_to(message, "❌ Invalid format!", parse_mode='Markdown')
+
+def process_admin_ban(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    user_states.pop(user_id, None)
+    if message.text == "/cancel":
+        bot.reply_to(message, "Cancelled", reply_markup=main_menu_markup(user_id))
+        return
+    try:
+        target_user = int(message.text.strip())
+        ban_user(target_user)
+        bot.reply_to(message, f"✅ Banned user `{target_user}`", parse_mode='Markdown')
+        try:
+            bot.send_message(target_user, "🚫 *You have been banned.* Contact support.", parse_mode='Markdown')
+        except:
+            pass
+    except:
+        bot.reply_to(message, "❌ Invalid user ID!", parse_mode='Markdown')
+
+def process_admin_unban(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    user_states.pop(user_id, None)
+    if message.text == "/cancel":
+        bot.reply_to(message, "Cancelled", reply_markup=main_menu_markup(user_id))
+        return
+    try:
+        target_user = int(message.text.strip())
+        unban_user(target_user)
+        bot.reply_to(message, f"✅ Unbanned user `{target_user}`", parse_mode='Markdown')
+        try:
+            bot.send_message(target_user, "✅ *You have been unbanned!* Use /start", parse_mode='Markdown')
+        except:
+            pass
+    except:
+        bot.reply_to(message, "❌ Invalid user ID!", parse_mode='Markdown')
+
+def process_admin_broadcast(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    user_states.pop(user_id, None)
+    if message.text == "/cancel":
+        bot.reply_to(message, "Cancelled", reply_markup=main_menu_markup(user_id))
+        return
+    broadcast_text = (message.text or message.caption or "").strip()
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✅ Send", callback_data="broadcast_confirm"), InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
+    temp_data[user_id] = {'broadcast_text': broadcast_text}
+    bot.reply_to(message, f"📢 *Confirm Broadcast*\n\n📝 Message:\n`{broadcast_text}`\n\nSend to all active users?", reply_markup=markup, parse_mode='Markdown')
+
+def process_admin_giveaway(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    user_states.pop(user_id, None)
+    if message.text == "/cancel":
+        bot.reply_to(message, "Cancelled", reply_markup=main_menu_markup(user_id))
+        return
+    try:
+        credits = int(message.text.strip())
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("✅ Give Away", callback_data="giveaway_confirm"), InlineKeyboardButton("❌ Cancel", callback_data="cancel"))
+        temp_data[user_id] = {'giveaway_credits': credits}
+        bot.reply_to(message, f"🎁 *Confirm Giveaway*\n\nGive `{credits}` credits to ALL users?", reply_markup=markup, parse_mode='Markdown')
+    except:
+        bot.reply_to(message, "❌ Invalid number!", parse_mode='Markdown')
+
+def confirm_broadcast(call):
+    user_id = call.from_user.id
+    if user_id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "Unauthorized!", show_alert=True)
+        return
+    bot.answer_callback_query(call.id)
+    if user_id not in temp_data:
+        bot.edit_message_text("❌ Broadcast cancelled.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id))
+        return
+    broadcast_text = temp_data[user_id]['broadcast_text']
+    users = get_all_users()
+    success = 0
+    failed = 0
+    bot.edit_message_text(f"📡 *Broadcasting to {len(users)} users...*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    for target_user_id in users:
+        try:
+            broadcast_msg = f"*📢 TRACEX BROADCAST*\n{broadcast_text}\n━━━━━━━━━━━━━━━━\n📞 Support: {ADMIN_USERNAME}\n👥 Group: [Join Community]({GROUP_LINK})"
+            bot.send_message(target_user_id, broadcast_msg, parse_mode='Markdown', disable_web_page_preview=True)
+            success += 1
+        except Exception:
+            failed += 1
+        time.sleep(0.05)
+    result_msg = f"✅ *Broadcast Complete!*\n✅ Sent: `{success}`\n❌ Failed: `{failed}`\n📝 Total: `{len(users)}`"
+    bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+    del temp_data[user_id]
+
+def confirm_giveaway(call):
+    user_id = call.from_user.id
+    if user_id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "Unauthorized!", show_alert=True)
+        return
+    bot.answer_callback_query(call.id)
+    if user_id not in temp_data:
+        bot.edit_message_text("❌ Giveaway cancelled.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id))
+        return
+    credits = temp_data[user_id]['giveaway_credits']
+    bot.edit_message_text(f"🎁 *Processing Giveaway...*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    success, failed = add_giveaway_credits(credits)
+    result_msg = f"🎉 *Giveaway Complete!*\n✨ `{credits}` credits to each user!\n✅ Successful: `{success}`\n❌ Failed: `{failed}`\n💎 Total Distributed: `{success * credits}`"
+    bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+    del temp_data[user_id]
+
+# ==================== PROTECTION FUNCTIONS ====================
+def show_protection_menu(message):
+    text = f"""
 🛡️ *PROTECTION SERVICES*
 ━━━━━━━━━━━━━━━━━━
 
 📱 Number Protection → ₹99
-💬 Telegram Protection → ₹99
+💬 Telegram ID Protection → ₹99
 
 Protected data will not be shown in lookup results.
-
-{footer()}
 """
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(InlineKeyboardButton("📱 PROTECT NUMBER - ₹99", callback_data="plan_protect_number"))
-        markup.add(InlineKeyboardButton("💬 PROTECT TELEGRAM - ₹99", callback_data="plan_protect_telegram"))
-        markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
-        bot.reply_to(message, prot_msg, reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(message.chat.id, text, reply_markup=protection_menu_markup(), parse_mode="Markdown")
+
+def process_protection_payment_input(message, plan_id):
+    user_id = message.from_user.id
+    if message.text == "/cancel":
+        user_states.pop(user_id, None)
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        return
+
+    state = user_states.get(user_id)
+    if not (isinstance(state, dict) and state.get("state") == "awaiting_protection_input" and state.get("plan_id") == plan_id):
+        return
+
+    user_states.pop(user_id, None)
+    value = str(message.text or "").strip()
     
-    elif text == "🤖 BOOK A BOT":
-        booking_msg = f"""
+    if plan_id == "protect_number":
+        if not re.match(r'^[6-9]\d{9}$', value):
+            bot.reply_to(message, "❌ *Invalid number!*\n\nEnter a 10-digit Indian mobile number.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+            return
+        if is_number_protected(value):
+            bot.reply_to(message, f"❌ Number `{value}` is already protected.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+            return
+    elif plan_id == "protect_telegram":
+        if not re.match(r'^\d{4,15}$', value):
+            bot.reply_to(message, "❌ *Invalid Telegram ID!*\n\nEnter a numeric Telegram ID.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+            return
+        if is_telegram_protected(value):
+            bot.reply_to(message, f"❌ Telegram ID `{value}` is already protected.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+            return
+    
+    send_manual_qr_payment(message.chat.id, user_id, message.from_user.username or "no_username", plan_id, protected_number=value)
+
+def show_bot_booking(message):
+    booking_msg = f"""
 🤖 *CUSTOM BOT BOOKING*
 ━━━━━━━━━━━━━━━━━━
 
-💰 Setup: ₹999
-📆 API charges separate
-⏰ Delivery: 24-48 hours
+💰 *Bot setup:* ₹399
+📆 *API charges:* Monthly (separate)
+🔧 *Updates:* ₹399 per update
+⏰ *Delivery:* 24-48 hours
 
-👇 Tap below to create payment session.
-
+👇 Tap below to create booking payment.
 {footer()}
 """
-        markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(InlineKeyboardButton("💳 BOOK BOT - ₹999", callback_data="booking_pay"))
-        markup.add(InlineKeyboardButton("👨‍💻 CONTACT ADMIN", url="https://t.me/gaurav_beniwal_0001"))
-        markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
-        bot.reply_to(message, booking_msg, reply_markup=markup, parse_mode='Markdown')
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton("💳 Book Bot - Pay ₹399", callback_data="booking_pay"))
+    markup.add(InlineKeyboardButton("👨‍💻 Contact Admin", url="https://t.me/gaurav_beniwal_0001"))
+    markup.add(InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu"))
+    bot.send_message(message.chat.id, booking_msg, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
+
+# ==================== FLASK WEBHOOK ====================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "TraceX Bot Running"
+
+@app.route('/payment/success', methods=['GET'])
+def payment_success():
+    return """
+    <html>
+        <head><title>Payment Successful - TraceX</title></head>
+        <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+            <h1 style="color: green;">✅ Payment Successful!</h1>
+            <p>You will receive confirmation in Telegram shortly.</p>
+            <p>You can close this window now.</p>
+        </body>
+    </html>
+    """
+
+def keep_alive():
+    def run():
+        port = int(os.getenv("PORT", "8080"))
+        app.run(host='0.0.0.0', port=port, use_reloader=False)
+    t = threading.Thread(target=run)
+    t.daemon = True
+    t.start()
+
+# ==================== BOT HANDLERS ====================
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    username = message.from_user.username
+    first_name = message.from_user.first_name
     
-    elif text == "🏠 MAIN MENU" or text == "/start":
+    user = get_user(user_id)
+    
+    if user and user.get('is_banned'):
+        bot.reply_to(message, f"🚫 You are banned.\n\nContact: {ADMIN_USERNAME}")
+        return
+    
+    try:
+        supabase.table("telegram_users").update({
+            "telegram_username": username,
+            "telegram_name": first_name,
+            "last_seen": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("telegram_user_id", user_id).execute()
+    except:
+        pass
+    
+    total_credits = get_total_credits(user_id)
+    total_searches = user.get('total_searches', 0) if user else 0
+    unlimited_expiry = user.get('unlimited_expiry') if user else None
+    
+    unlimited_text = ""
+    if unlimited_expiry:
+        try:
+            expiry_date = datetime.fromisoformat(str(unlimited_expiry).replace('Z', '+00:00'))
+            if expiry_date > datetime.now(timezone.utc):
+                unlimited_text = f"\n🚀 Unlimited Active until: `{expiry_date.strftime('%Y-%m-%d %H:%M:%S')}`"
+        except:
+            pass
+    
+    welcome_msg = f"""
+🚀 *TRACEX LOOKUP*
+
+👋 Welcome, *{first_name}*
+
+💎 *Credits:* `{total_credits}`{unlimited_text}
+🔎 *Searches:* `{total_searches}`
+
+━━━━━━━━━━━━━━━━
+
+📱 Number Search → {NUMBER_LOOKUP_COST} Credits
+💬 Telegram Search → {TELEGRAM_LOOKUP_COST} Credits
+
+🎁 New users receive {NEW_USER_FREE_CREDITS} free credits.
+
+👇 Select an option below.
+{footer()}
+"""
+    
+    bot.send_message(message.chat.id, welcome_msg, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+
+@bot.message_handler(commands=['cancel'])
+def cancel_command(message):
+    user_id = message.from_user.id
+    if user_id in user_states:
+        del user_states[user_id]
+    if user_id in temp_data:
+        del temp_data[user_id]
+    bot.reply_to(message, "❌ Cancelled. Use /start for main menu.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+
+@bot.message_handler(commands=['verify'])
+def verify_command(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "Usage: /verify TXCODE")
+            return
+        tx_code = parts[1].strip()
+        ok, msg = manual_verify_payment(tx_code, message.from_user.id)
+        bot.reply_to(message, f"{'✅' if ok else '❌'} {msg}")
+    except Exception as e:
+        bot.reply_to(message, f"Error: {e}")
+
+@bot.message_handler(commands=['reject'])
+def reject_command(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 2:
+            bot.reply_to(message, "Usage: /reject TXCODE [reason]")
+            return
+        tx_code = parts[1].strip()
+        reason = parts[2].strip() if len(parts) > 2 else "Payment not confirmed"
+        ok, msg = manual_reject_payment(tx_code, message.from_user.id, reason)
+        bot.reply_to(message, f"{'✅' if ok else '❌'} {msg}")
+    except Exception as e:
+        bot.reply_to(message, f"Error: {e}")
+
+@bot.message_handler(commands=['maintenance'])
+def toggle_maintenance(message):
+    global MAINTENANCE_MODE
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split()
+    if len(parts) != 2:
+        bot.reply_to(message, "Usage:\n/maintenance on\n/maintenance off")
+        return
+    mode = parts[1].lower()
+    if mode == "on":
+        MAINTENANCE_MODE = True
+        bot.reply_to(message, "🛠 Maintenance mode ENABLED")
+    elif mode == "off":
+        MAINTENANCE_MODE = False
+        bot.reply_to(message, "✅ Maintenance mode DISABLED")
+
+@bot.message_handler(content_types=['photo', 'document'])
+def payment_screenshot_handler(message):
+    user_id = message.from_user.id
+    state = user_states.get(user_id)
+    if not (isinstance(state, dict) and state.get("state") == "awaiting_payment_screenshot"):
+        return
+
+    tx_code = state.get("tx_code")
+    if tx_code in proof_forwarded_txs:
+        bot.reply_to(message, f"✅ Screenshot already sent for TX `{tx_code}`.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         user_states.pop(user_id, None)
-        start_handler(message)
+        return
     
-    elif text == "❌ CANCEL":
+    proof_forwarded_txs.add(tx_code)
+    caption = f"📸 *PAYMENT SCREENSHOT*\n━━━━━━━━━━━━━━━━\n👤 User: `{user_id}`\n@ Username: @{message.from_user.username or 'no_username'}\n🧾 TX: `{tx_code}`\n\nVerify: `/verify {tx_code}`"
+    admin_markup = InlineKeyboardMarkup()
+    admin_markup.add(
+        InlineKeyboardButton("✅ Verify", callback_data=f"adminverify_{tx_code}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"adminreject_{tx_code}")
+    )
+
+    try:
+        try:
+            bot.copy_message(ADMIN_CHANNEL_ID, message.chat.id, message.message_id)
+        except Exception:
+            try:
+                bot.copy_message(ADMIN_ID, message.chat.id, message.message_id)
+            except Exception:
+                pass
+        
+        bot.send_message(ADMIN_CHANNEL_ID, caption, reply_markup=admin_markup, parse_mode='Markdown')
+        bot.reply_to(message, f"✅ Screenshot sent to admin.\n\n🧾 TX: `{tx_code}`\n⏳ Wait for verification.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-    
-    else:
-        bot.reply_to(message, "❌ Invalid option! Use the buttons below:", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    except Exception as e:
+        proof_forwarded_txs.discard(tx_code)
+        print(f"Payment screenshot error: {e}")
+        bot.reply_to(message, f"❌ Could not forward screenshot. Contact {ADMIN_USERNAME}", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
 
 # ==================== CALLBACK HANDLERS ====================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     user_id = call.from_user.id
-    action = str(call.data)
-
-    if MAINTENANCE_MODE and user_id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "Bot under maintenance 🛠️", show_alert=True)
+    user = get_user(user_id)
+    
+    if user and user.get('is_banned'):
+        bot.answer_callback_query(call.id, "You are banned!", show_alert=True)
         return
 
-    if not is_channel_member(user_id) and user_id != ADMIN_ID:
+    if call.data == "check_join":
+        if is_channel_member(user_id):
+            bot.answer_callback_query(call.id, "Joined verified ✅")
+            try:
+                bot.edit_message_text("✅ *Joined verified!*\n\nUse /start to open bot menu.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode="Markdown")
+            except Exception:
+                bot.send_message(call.message.chat.id, "✅ Joined verified! Use /start")
+        else:
+            bot.answer_callback_query(call.id, "Please join channel first", show_alert=True)
+        return
+
+    if not is_channel_member(user_id):
         bot.answer_callback_query(call.id, "Join channel first", show_alert=True)
         send_join_required(call.message.chat.id)
         return
-
-    try:
+    
+    if call.data == "main_menu":
+        try:
+            bot.edit_message_text("🏠 *Main Menu*", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        except Exception:
+            bot.send_message(call.message.chat.id, "🏠 *Main Menu*", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
         bot.answer_callback_query(call.id)
-    except Exception:
-        pass
-
-    if action == "main_menu":
+    
+    elif call.data == "cancel":
         user_states.pop(user_id, None)
-        user = get_user(user_id)
+        temp_data.pop(user_id, None)
+        with active_number_sessions_lock:
+            active_number_sessions.discard(user_id)
+        with active_telegram_sessions_lock:
+            active_telegram_sessions.discard(user_id)
+        try:
+            bot.edit_message_text("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        except Exception:
+            bot.send_message(call.message.chat.id, "❌ Cancelled. Use /start for main menu.", reply_markup=main_menu_markup(user_id), parse_mode='Markdown')
+        bot.answer_callback_query(call.id, "Cancelled")
+    
+    elif call.data == "lookup":
+        user_states[user_id] = "awaiting_number"
+        msg = bot.send_message(call.message.chat.id, "📱 *NUMBER SEARCH*\n\nEnter a 10-digit mobile number\n\nExample:\n9876543210\n\n💎 Cost: 2 Credits\n\n❌ Use Cancel button to exit.", reply_markup=cancel_button(), parse_mode='Markdown')
+        bot.register_next_step_handler(msg, process_lookup)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "telegram_lookup":
+        user_states[user_id] = "awaiting_telegram_username"
+        msg = bot.send_message(call.message.chat.id, "💬 *TELEGRAM SEARCH*\n\nEnter Telegram username\n\nExamples:\n@username\nusername\n\n💎 Cost: 5 Credits\n\n❌ Use Cancel button to exit.", reply_markup=cancel_button(), parse_mode='Markdown')
+        bot.register_next_step_handler(msg, process_telegram_lookup)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "protection_menu":
+        show_protection_menu(call.message)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "credits":
         total_credits = get_total_credits(user_id)
-        unlimited_active, unlimited_expiry = get_active_unlimited(user)
-
-        welcome = header("TRACEX PLATFORM", "🔥")
-        welcome += f"Welcome *{call.from_user.first_name or 'User'}*!\n\n"
-        welcome += f"💎 Credits: `{total_credits}`\n"
-        if unlimited_active:
-            welcome += f"🚀 Unlimited Active until `{unlimited_expiry[:16]}`\n"
-        welcome += f"🔎 Total Searches: `{user.get('total_searches', 0) if user else 0}`\n\n"
-        welcome += "Select an option from the buttons below:"
-        welcome += footer()
-
-        try:
-            bot.edit_message_text(welcome, call.message.chat.id, call.message.message_id, reply_markup=None, parse_mode='Markdown')
-            bot.send_message(call.message.chat.id, "Use the buttons below:", reply_markup=get_main_keyboard())
-        except Exception:
-            bot.send_message(call.message.chat.id, welcome, reply_markup=get_main_keyboard(), parse_mode='Markdown')
-
-    elif action == "cancel":
-        user_states.pop(user_id, None)
-        try:
-            bot.edit_message_text("❌ Cancelled.", call.message.chat.id, call.message.message_id, reply_markup=None)
-            bot.send_message(call.message.chat.id, "Use /start for main menu.", reply_markup=get_main_keyboard())
-        except Exception:
-            pass
-
-    elif action == "check_join":
-        if is_channel_member(user_id):
-            bot.send_message(call.message.chat.id, "✅ Membership confirmed! Use /start to open menu.", reply_markup=get_main_keyboard())
-        else:
-            bot.answer_callback_query(call.id, "Please join channel first", show_alert=True)
-
-    elif action == "buy":
+        total_searches = user.get('total_searches', 0) if user else 0
+        unlimited_expiry = user.get('unlimited_expiry') if user else None
+        unlimited_text = ""
+        if unlimited_expiry:
+            try:
+                expiry_date = datetime.fromisoformat(str(unlimited_expiry).replace('Z', '+00:00'))
+                if expiry_date > datetime.now(timezone.utc):
+                    unlimited_text = f"\n🚀 *Unlimited Active*\n   Expires: `{expiry_date.strftime('%Y-%m-%d %H:%M:%S')}`"
+            except:
+                pass
+        
+        # Build credit packs text dynamically from config
+        credit_packs_text = ""
+        for plan_id, plan in CREDIT_PLANS.items():
+            credit_packs_text += f"• {plan['label']} → ₹{plan['amount']}\n"
+        
+        unlimited_plans_text = ""
+        for plan_id, plan in UNLIMITED_PLANS.items():
+            unlimited_plans_text += f"• {plan['label']} → ₹{plan['amount']}\n"
+        
+        credits_msg = f"""
+*💎 MY CREDITS*
+━━━━━━━━━━━━━━━━━━
+💰 *Credits:* `{total_credits}`{unlimited_text}
+🔎 *Used:* `{total_searches}`
+━━━━━━━━━━━━━━━━━━
+*📦 CREDIT PACKS*
+{credit_packs_text}
+*🚀 UNLIMITED PLANS*
+{unlimited_plans_text}
+*🛡️ PROTECTION*
+• Number Protection → ₹99
+• Telegram ID Protection → ₹99
+"""
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🛒 Buy Credits", callback_data="buy"))
+        markup.add(InlineKeyboardButton("🔙 Back", callback_data="main_menu"))
+        bot.edit_message_text(credits_msg, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "buy":
         packs_msg = f"""
-💎 *CREDIT STORE*
+💎 *BUY CREDITS & PLANS*
 ━━━━━━━━━━━━━━━━━━
 
 💰 *CREDIT PACKS*
-• 40 Credits → ₹20  
-• 120 Credits → ₹50
-• 400 Credits → ₹100
+• 10 Credits → ₹20  
+• 50 Credits → ₹70  
+• 100 Credits → ₹100
 
 🚀 *UNLIMITED PLANS*
-• 1 Day Unlimited → ₹50
-• 7 Days Unlimited → ₹250
-• 30 Days Unlimited → ₹800
+• 7 Days Unlimited → ₹200
+• 30 Days Unlimited → ₹500
 
+🛡️ *PROTECTION*
+• Number Protection → ₹99
+• Telegram ID Protection → ₹99
+
+━━━━━━━━━━━━━━━━━━
+✅ Permanent Credits NEVER EXPIRE
+✅ Manual payment verification
+
+👇 Select your plan below
 {footer()}
 """
-        try:
-            bot.edit_message_text(packs_msg, call.message.chat.id, call.message.message_id, reply_markup=credit_packs_markup(), parse_mode='Markdown')
-        except Exception:
-            bot.send_message(call.message.chat.id, packs_msg, reply_markup=credit_packs_markup(), parse_mode='Markdown')
-
-    elif action.startswith("plan_"):
-        plan_id = action.replace("plan_", "")
-        plan = get_plan_config(plan_id)
-        if not plan:
-            bot.send_message(call.message.chat.id, "❌ Invalid plan.")
+        bot.edit_message_text(packs_msg, call.message.chat.id, call.message.message_id, reply_markup=credit_packs_markup(), parse_mode='Markdown')
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "book_bot":
+        show_bot_booking(call.message)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "booking_pay":
+        bot.answer_callback_query(call.id, "Creating booking QR... ✅")
+        send_manual_qr_payment(call.message.chat.id, user_id, call.from_user.username or "no_username", "bot_booking")
+    
+    elif call.data.startswith("submitproof_"):
+        tx_code = call.data.replace("submitproof_", "", 1)
+        user_states[user_id] = {"state": "awaiting_payment_screenshot", "tx_code": tx_code}
+        bot.send_message(call.message.chat.id, f"📸 *Send payment screenshot now*\n\n🧾 TX: `{tx_code}`\n\nYour screenshot will be forwarded to admin for verification.", reply_markup=cancel_button(), parse_mode='Markdown')
+        bot.answer_callback_query(call.id, "Now send screenshot here")
+    
+    elif call.data.startswith("adminverify_"):
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "Unauthorized!", show_alert=True)
             return
-
-        bot.answer_callback_query(call.id, f"Processing {plan['label']}...")
+        tx_code = call.data.replace("adminverify_", "", 1)
+        ok, msg = manual_verify_payment(tx_code, user_id)
+        bot.answer_callback_query(call.id, "Verified" if ok else msg, show_alert=not ok)
+    
+    elif call.data.startswith("adminreject_"):
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "Unauthorized!", show_alert=True)
+            return
+        tx_code = call.data.replace("adminreject_", "", 1)
+        ok, msg = manual_reject_payment(tx_code, user_id)
+        bot.answer_callback_query(call.id, "Rejected" if ok else msg, show_alert=not ok)
+    
+    elif call.data.startswith("plan_"):
+        plan_id = call.data.replace("plan_", "")
         
         if plan_id in ["protect_number", "protect_telegram"]:
-            if plan_id == "protect_number":
-                bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number to protect:*\n\nType /cancel to abort", reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
-                user_states[user_id] = {"state": "awaiting_protection_input", "plan_id": plan_id}
-            else:
-                bot.send_message(call.message.chat.id, "💬 *Enter Telegram ID to protect:*\n\nType /cancel to abort", reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
-                user_states[user_id] = {"state": "awaiting_protection_input", "plan_id": plan_id}
-            return
-
-        order_id = f"TX_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
-        
-        payload = {
-            "order_id": order_id,
-            "order_amount": float(plan["amount"]),
-            "order_currency": "INR",
-            "customer_details": {
-                "customer_id": f"CUST_{user_id}",
-                "customer_phone": "9999999999",
-                "customer_email": f"user_{user_id}@tracex.com"
-            },
-            "order_meta": {
-                "return_url": f"{RENDER_BASE_URL}/payment-status?order_id={order_id}",
-                "notify_url": f"{RENDER_BASE_URL}/webhook/cashfree",
+            labels = {
+                "protect_number": ("📱 *NUMBER PROTECTION*", "Enter the 10-digit mobile number you want to protect:", "Example: 9876543210"),
+                "protect_telegram": ("💬 *TELEGRAM ID PROTECTION*", "Enter your numeric Telegram user ID:", "Example: 123456789")
             }
-        }
-
-        headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION,
-            "Content-Type": "application/json"
-        }
-
-        try:
-            resp = requests.post(CASHFREE_API_BASE, headers=headers, json=payload, timeout=20)
-            res_data = resp.json()
-            
-            if resp.status_code == 200 and "payment_session_id" in res_data:
-                pay_url = f"https://payments.cashfree.com/order/#/{res_data['payment_session_id']}"
-                mk = InlineKeyboardMarkup()
-                mk.add(InlineKeyboardButton("💳 PAY NOW", url=pay_url))
-                mk.add(InlineKeyboardButton("✅ VERIFY", callback_data=f"verify_tx_{order_id}"))
-                mk.add(InlineKeyboardButton("🔙 BACK", callback_data="main_menu"))
-                
-                try:
-                    supabase.table("payment_orders").insert({
-                        "order_id": order_id,
-                        "telegram_user_id": user_id,
-                        "plan_id": plan_id,
-                        "amount": plan["amount"],
-                        "status": "PENDING",
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    }).execute()
-                except Exception:
-                    pass
-
-                txt = f"⚡ *Payment Gateway*\n━━━━━━━━━━━━━━━━\n\nPlan: *{plan['label']}*\nAmount: *₹{plan['amount']}*\nOrder ID: `{order_id}`\n\nClick below to pay:"
-                bot.send_message(call.message.chat.id, txt, reply_markup=mk, parse_mode='Markdown')
-                send_admin_alert(f"💸 Payment initiated\nUser: `{user_id}`\nPlan: {plan['label']}\nAmount: ₹{plan['amount']}")
-            else:
-                bot.send_message(call.message.chat.id, "❌ Payment gateway error. Please try again later.", reply_markup=get_main_keyboard())
-        except Exception as e:
-            print(f"Payment error: {e}")
-            bot.send_message(call.message.chat.id, "❌ Payment service unavailable. Contact admin.", reply_markup=get_main_keyboard())
-
-    elif action.startswith("verify_tx_"):
-        order_id = action.replace("verify_tx_", "")
-        headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION
-        }
-        try:
-            v_url = f"{CASHFREE_API_BASE}/{order_id}"
-            resp = requests.get(v_url, headers=headers, timeout=20)
-            v_data = resp.json()
-            status = str(v_data.get("order_status", "PENDING")).upper()
-            
-            if status == "PAID":
-                res = supabase.table("payment_orders").select("*").eq("order_id", order_id).execute()
-                if res.data and res.data[0].get("status") != "SUCCESS":
-                    order = res.data[0]
-                    plan = get_plan_config(order["plan_id"])
-                    if plan:
-                        ptype = plan.get("payment_for")
-                        if ptype == "credits":
-                            add_credits(user_id, plan["credits"])
-                        elif ptype == "unlimited":
-                            minutes = plan.get("unlimited_minutes", 0)
-                            new_expiry = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-                            supabase.table("telegram_users").update({
-                                "unlimited_expiry": new_expiry.isoformat()
-                            }).eq("telegram_user_id", user_id).execute()
-                    supabase.table("payment_orders").update({"status": "SUCCESS"}).eq("order_id", order_id).execute()
-                    bot.send_message(call.message.chat.id, f"✅ *Payment Successful!*\n\n{plan['label']} activated!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-                else:
-                    bot.send_message(call.message.chat.id, "✅ Payment already processed!", reply_markup=get_main_keyboard())
-            else:
-                bot.send_message(call.message.chat.id, f"⚠️ Payment status: {status}\nPlease complete payment first.", reply_markup=get_main_keyboard())
-        except Exception as e:
-            bot.send_message(call.message.chat.id, "❌ Could not verify payment. Please wait or contact admin.", reply_markup=get_main_keyboard())
-
-    elif action == "booking_pay":
-        plan = get_plan_config("bot_booking")
-        order_id = f"BK_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
-        
-        payload = {
-            "order_id": order_id,
-            "order_amount": float(plan["amount"]),
-            "order_currency": "INR",
-            "customer_details": {
-                "customer_id": f"CUST_{user_id}",
-                "customer_phone": "9999999999",
-                "customer_email": f"user_{user_id}@tracex.com"
-            },
-            "order_meta": {
-                "return_url": f"{RENDER_BASE_URL}/payment-status?order_id={order_id}",
-                "notify_url": f"{RENDER_BASE_URL}/webhook/cashfree",
-            }
-        }
-
-        headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION,
-            "Content-Type": "application/json"
-        }
-
-        try:
-            resp = requests.post(CASHFREE_API_BASE, headers=headers, json=payload, timeout=20)
-            res_data = resp.json()
-            
-            if resp.status_code == 200 and "payment_session_id" in res_data:
-                pay_url = f"https://payments.cashfree.com/order/#/{res_data['payment_session_id']}"
-                mk = InlineKeyboardMarkup()
-                mk.add(InlineKeyboardButton("💳 PAY ₹999", url=pay_url))
-                mk.add(InlineKeyboardButton("✅ VERIFY", callback_data=f"verify_booking_{order_id}"))
-                
-                try:
-                    supabase.table("payment_orders").insert({
-                        "order_id": order_id,
-                        "telegram_user_id": user_id,
-                        "plan_id": "bot_booking",
-                        "amount": 999,
-                        "status": "PENDING",
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    }).execute()
-                except Exception:
-                    pass
-
-                bot.send_message(call.message.chat.id, "🤖 *Bot Booking Payment*\n\nClick below to complete payment:", reply_markup=mk, parse_mode='Markdown')
-            else:
-                bot.send_message(call.message.chat.id, "❌ Payment error. Contact admin.", reply_markup=get_main_keyboard())
-        except Exception:
-            bot.send_message(call.message.chat.id, "❌ Payment service unavailable.", reply_markup=get_main_keyboard())
-
-    elif action.startswith("verify_booking_"):
-        order_id = action.replace("verify_booking_", "")
-        headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION
-        }
-        try:
-            v_url = f"{CASHFREE_API_BASE}/{order_id}"
-            resp = requests.get(v_url, headers=headers, timeout=20)
-            v_data = resp.json()
-            status = str(v_data.get("order_status", "PENDING")).upper()
-            
-            if status == "PAID":
-                supabase.table("payment_orders").update({"status": "SUCCESS"}).eq("order_id", order_id).execute()
-                bot.send_message(call.message.chat.id, "✅ *Booking Confirmed!*\n\nAdmin will contact you within 24-48 hours.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-                send_admin_alert(f"🤖 Bot Booking\nUser: `{user_id}`\nOrder: `{order_id}`\nContact user for requirements.")
-            else:
-                bot.send_message(call.message.chat.id, f"⚠️ Payment status: {status}\nPlease complete payment.", reply_markup=get_main_keyboard())
-        except Exception:
-            bot.send_message(call.message.chat.id, "❌ Could not verify. Contact admin.", reply_markup=get_main_keyboard())
-
-    elif action == "admin" and user_id == ADMIN_ID:
-        bot.send_message(call.message.chat.id, "🛠 Admin panel - Use /commands", reply_markup=get_main_keyboard())
-
-# ==================== PROTECTION INPUT HANDLER ====================
-@bot.message_handler(func=lambda m: isinstance(user_states.get(m.from_user.id), dict) and user_states[m.from_user.id].get("state") == "awaiting_protection_input")
-def protection_input_handler(message):
-    user_id = message.from_user.id
-    state = user_states.get(user_id)
-    if not state:
-        return
-
-    plan_id = state.get("plan_id")
-    value = str(message.text or "").strip()
-
-    if value == "❌ CANCEL" or value == "/cancel":
-        user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Protection cancelled.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-        return
-
-    if plan_id == "protect_number":
-        phone = normalize_indian_mobile(value)
-        if not phone:
-            bot.reply_to(message, "❌ Invalid number! Enter 10-digit Indian number.", reply_markup=get_main_keyboard())
-            return
-        if is_number_protected(phone):
-            bot.reply_to(message, f"❌ Number `{phone}` is already protected!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            title, prompt, example = labels[plan_id]
+            user_states[user_id] = {"state": "awaiting_protection_input", "plan_id": plan_id}
+            msg = bot.send_message(call.message.chat.id, f"{title}\n\n{prompt}\n\n{example}\n\n💰 Price: ₹99\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            bot.register_next_step_handler(msg, process_protection_payment_input, plan_id)
+            bot.answer_callback_query(call.id)
             return
         
-        plan = get_plan_config("protect_number")
-        order_id = f"PR_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
-        
-        payload = {
-            "order_id": order_id,
-            "order_amount": float(plan["amount"]),
-            "order_currency": "INR",
-            "customer_details": {
-                "customer_id": f"CUST_{user_id}",
-                "customer_phone": phone,
-                "customer_email": f"user_{user_id}@tracex.com"
-            },
-            "order_meta": {
-                "return_url": f"{RENDER_BASE_URL}/payment-status?order_id={order_id}",
-                "notify_url": f"{RENDER_BASE_URL}/webhook/cashfree",
-            }
-        }
-
-        headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION,
-            "Content-Type": "application/json"
-        }
-
-        try:
-            resp = requests.post(CASHFREE_API_BASE, headers=headers, json=payload, timeout=20)
-            res_data = resp.json()
-            
-            if resp.status_code == 200 and "payment_session_id" in res_data:
-                pay_url = f"https://payments.cashfree.com/order/#/{res_data['payment_session_id']}"
-                mk = InlineKeyboardMarkup()
-                mk.add(InlineKeyboardButton("💳 PAY ₹99", url=pay_url))
-                mk.add(InlineKeyboardButton("✅ VERIFY", callback_data=f"verify_protect_{order_id}"))
-                
-                try:
-                    supabase.table("payment_orders").insert({
-                        "order_id": order_id,
-                        "telegram_user_id": user_id,
-                        "plan_id": "protect_number",
-                        "amount": 99,
-                        "protected_value": phone,
-                        "status": "PENDING",
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    }).execute()
-                except Exception:
-                    pass
-
-                bot.send_message(message.chat.id, f"🛡️ *Number Protection*\n\nNumber: `{phone}`\nAmount: ₹99\n\nClick below to pay:", reply_markup=mk, parse_mode='Markdown')
-                user_states.pop(user_id, None)
-            else:
-                bot.reply_to(message, "❌ Payment error. Try again later.", reply_markup=get_main_keyboard())
-        except Exception:
-            bot.reply_to(message, "❌ Payment service unavailable.", reply_markup=get_main_keyboard())
-
-    elif plan_id == "protect_telegram":
-        tg_id = str(value).strip()
-        if not re.match(r'^\d{5,15}$', tg_id):
-            bot.reply_to(message, "❌ Invalid Telegram ID! Enter numeric ID only.", reply_markup=get_main_keyboard())
-            return
-        if is_telegram_protected(tg_id):
-            bot.reply_to(message, f"❌ Telegram ID `{tg_id}` is already protected!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-            return
-        
-        plan = get_plan_config("protect_telegram")
-        order_id = f"PT_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
-        
-        payload = {
-            "order_id": order_id,
-            "order_amount": float(plan["amount"]),
-            "order_currency": "INR",
-            "customer_details": {
-                "customer_id": f"CUST_{user_id}",
-                "customer_phone": "9999999999",
-                "customer_email": f"user_{user_id}@tracex.com"
-            },
-            "order_meta": {
-                "return_url": f"{RENDER_BASE_URL}/payment-status?order_id={order_id}",
-                "notify_url": f"{RENDER_BASE_URL}/webhook/cashfree",
-            }
-        }
-
-        headers = {
-            "x-client-id": CASHFREE_APP_ID,
-            "x-client-secret": CASHFREE_SECRET_KEY,
-            "x-api-version": CASHFREE_API_VERSION,
-            "Content-Type": "application/json"
-        }
-
-        try:
-            resp = requests.post(CASHFREE_API_BASE, headers=headers, json=payload, timeout=20)
-            res_data = resp.json()
-            
-            if resp.status_code == 200 and "payment_session_id" in res_data:
-                pay_url = f"https://payments.cashfree.com/order/#/{res_data['payment_session_id']}"
-                mk = InlineKeyboardMarkup()
-                mk.add(InlineKeyboardButton("💳 PAY ₹99", url=pay_url))
-                mk.add(InlineKeyboardButton("✅ VERIFY", callback_data=f"verify_protect_tg_{order_id}"))
-                
-                try:
-                    supabase.table("payment_orders").insert({
-                        "order_id": order_id,
-                        "telegram_user_id": user_id,
-                        "plan_id": "protect_telegram",
-                        "amount": 99,
-                        "protected_value": tg_id,
-                        "status": "PENDING",
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    }).execute()
-                except Exception:
-                    pass
-
-                bot.send_message(message.chat.id, f"🛡️ *Telegram Protection*\n\nTelegram ID: `{tg_id}`\nAmount: ₹99\n\nClick below to pay:", reply_markup=mk, parse_mode='Markdown')
-                user_states.pop(user_id, None)
-            else:
-                bot.reply_to(message, "❌ Payment error. Try again later.", reply_markup=get_main_keyboard())
-        except Exception:
-            bot.reply_to(message, "❌ Payment service unavailable.", reply_markup=get_main_keyboard())
-
-# ==================== VERIFICATION CALLBACKS FOR PROTECTION ====================
-@bot.callback_query_handler(func=lambda call: call.data.startswith("verify_protect_"))
-def verify_protection_payment(call):
-    user_id = call.from_user.id
-    data = call.data
-    order_id = data.replace("verify_protect_", "")
+        bot.answer_callback_query(call.id, "Sending QR... ✅")
+        send_manual_qr_payment(call.message.chat.id, user_id, call.from_user.username or "no_username", plan_id)
     
-    headers = {
-        "x-client-id": CASHFREE_APP_ID,
-        "x-client-secret": CASHFREE_SECRET_KEY,
-        "x-api-version": CASHFREE_API_VERSION
-    }
-    try:
-        v_url = f"{CASHFREE_API_BASE}/{order_id}"
-        resp = requests.get(v_url, headers=headers, timeout=20)
-        v_data = resp.json()
-        status = str(v_data.get("order_status", "PENDING")).upper()
+    elif call.data in ["admin_add", "admin_remove", "admin_ban", "admin_unban", "admin_broadcast", "admin_stats", "admin_transactions", "admin_back", "admin_giveaway"]:
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "Unauthorized!", show_alert=True)
+            return
         
-        if status == "PAID":
-            res = supabase.table("payment_orders").select("*").eq("order_id", order_id).execute()
-            if res.data and res.data[0].get("status") != "SUCCESS":
-                order = res.data[0]
-                plan_id = order["plan_id"]
-                protected_value = order.get("protected_value")
-                
-                if plan_id == "protect_number" and protected_value:
-                    add_protected_number(protected_value, f"User_{user_id}")
-                    bot.send_message(call.message.chat.id, f"✅ *Number Protected!*\n\nNumber: `{protected_value}`\n\nThis number will not appear in lookup results.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-                elif plan_id == "protect_telegram" and protected_value:
-                    add_protected_telegram_id(protected_value, f"User_{user_id}")
-                    bot.send_message(call.message.chat.id, f"✅ *Telegram ID Protected!*\n\nID: `{protected_value}`\n\nThis Telegram ID will not appear in lookup results.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-                
-                supabase.table("payment_orders").update({"status": "SUCCESS"}).eq("order_id", order_id).execute()
-                send_admin_alert(f"🛡️ Protection purchased\nUser: `{user_id}`\nPlan: {plan_id}\nValue: {protected_value}")
-            else:
-                bot.send_message(call.message.chat.id, "✅ Protection already activated!", reply_markup=get_main_keyboard())
+        if call.data == "admin_add":
+            user_states[user_id] = "admin_add"
+            msg = bot.send_message(call.message.chat.id, "➕ *ADD CREDITS / UNLIMITED*\n\nCredits format:\n`user_id credits`\nExample: `123456789 50`\n\nUnlimited format:\n`user_id u1w` / `user_id u1m`\nExample: `123456789 u1w`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            bot.register_next_step_handler(msg, process_admin_add)
+        elif call.data == "admin_remove":
+            user_states[user_id] = "admin_remove"
+            msg = bot.send_message(call.message.chat.id, "➖ *REMOVE CREDITS / DEACTIVATE UNLIMITED*\n\nRemove credits:\n`user_id_or_username credits`\nExample: `@username 10`\n\nDeactivate unlimited:\n`user_id_or_username unlimited`\nExample: `@username unlimited`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            bot.register_next_step_handler(msg, process_admin_remove)
+        elif call.data == "admin_ban":
+            user_states[user_id] = "admin_ban"
+            msg = bot.send_message(call.message.chat.id, "🚫 *BAN USER*\n\nEnter user ID to ban\nExample: `123456789`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            bot.register_next_step_handler(msg, process_admin_ban)
+        elif call.data == "admin_unban":
+            user_states[user_id] = "admin_unban"
+            msg = bot.send_message(call.message.chat.id, "✅ *UNBAN USER*\n\nEnter user ID to unban\nExample: `123456789`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            bot.register_next_step_handler(msg, process_admin_unban)
+        elif call.data == "admin_broadcast":
+            user_states[user_id] = "admin_broadcast"
+            msg = bot.send_message(call.message.chat.id, "📢 *BROADCAST*\n\nSend your broadcast message below:\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            bot.register_next_step_handler(msg, process_admin_broadcast)
+        elif call.data == "admin_giveaway":
+            user_states[user_id] = "admin_giveaway"
+            msg = bot.send_message(call.message.chat.id, "🎁 *GIVEAWAY CREDITS*\n\nEnter number of credits to give to ALL users:\n\nExample: `50`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            bot.register_next_step_handler(msg, process_admin_giveaway)
+        elif call.data == "admin_stats":
+            show_admin_stats(call.message)
+        elif call.data == "admin_transactions":
+            show_admin_transactions(call.message)
+        elif call.data == "admin_back":
+            show_admin_panel(call.message)
+        elif call.data == "admin":
+            show_admin_panel(call.message)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data in ["broadcast_confirm", "giveaway_confirm"]:
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "Unauthorized!", show_alert=True)
+            return
+        if call.data == "broadcast_confirm":
+            confirm_broadcast(call)
         else:
-            bot.send_message(call.message.chat.id, f"⚠️ Payment status: {status}\nPlease complete payment first.", reply_markup=get_main_keyboard())
-    except Exception as e:
-        bot.send_message(call.message.chat.id, "❌ Could not verify. Contact admin.", reply_markup=get_main_keyboard())
+            confirm_giveaway(call)
 
-# ==================== FLASK WEBHOOK SERVER ====================
-app = Flask(__name__)
-
-@app.route("/", methods=["GET"])
-def index():
-    return jsonify({"status": "ONLINE", "version": BOT_VERSION}), 200
-
-@app.route("/payment-status", methods=["GET"])
-def payment_status():
-    return "<h3>Payment Status</h3><p>Return to Telegram and click Verify button.</p>", 200
-
-@app.route("/webhook/cashfree", methods=["POST"])
-def cashfree_webhook():
+# ==================== DAILY TASKS ====================
+def record_search_for_daily_report(user_id, username, first_name, query_value, found=True, lookup_type="number", credits_used=0):
     try:
-        raw_payload = request.data
-        signature = request.headers.get("x-webhook-signature")
-        timestamp = request.headers.get("x-webhook-timestamp")
-        
-        if signature and timestamp and CASHFREE_WEBHOOK_SECRET:
-            data_to_sign = timestamp.encode('utf-8') + raw_payload
-            secret = CASHFREE_WEBHOOK_SECRET.encode('utf-8')
-            computed_sig = hmac.new(secret, data_to_sign, hashlib.sha256).digest()
-            import base64
-            computed_sig_b64 = base64.b64encode(computed_sig).decode('utf-8')
-            
-            if computed_sig_b64 != signature and CASHFREE_ENV != "TEST":
-                return jsonify({"status": "UNAUTHORIZED"}), 401
-        
-        payload = request.json
-        event = payload.get("type")
-        
-        if event == "ORDER_PAID_SUCCESS":
-            data_obj = payload.get("data", {}).get("order", {})
-            order_id = data_obj.get("order_id")
-            
-            res = supabase.table("payment_orders").select("*").eq("order_id", order_id).execute()
-            if res.data and res.data[0].get("status") != "SUCCESS":
-                order = res.data[0]
-                user_id = order["telegram_user_id"]
-                plan_id = order["plan_id"]
-                plan = get_plan_config(plan_id)
-                
-                if plan:
-                    ptype = plan.get("payment_for")
-                    if ptype == "credits":
-                        add_credits(user_id, plan["credits"])
-                    elif ptype == "unlimited":
-                        minutes = plan.get("unlimited_minutes", 0)
-                        new_expiry = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-                        supabase.table("telegram_users").update({
-                            "unlimited_expiry": new_expiry.isoformat()
-                        }).eq("telegram_user_id", user_id).execute()
-                    elif ptype == "protect_number":
-                        protected_value = order.get("protected_value")
-                        if protected_value:
-                            add_protected_number(protected_value, f"User_{user_id}")
-                    elif ptype == "protect_telegram":
-                        protected_value = order.get("protected_value")
-                        if protected_value:
-                            add_protected_telegram_id(protected_value, f"User_{user_id}")
-                
-                supabase.table("payment_orders").update({"status": "SUCCESS"}).eq("order_id", order_id).execute()
-                try:
-                    bot.send_message(user_id, f"✅ *Payment Successful!*\n\n{plan['label']} activated!" if plan else "✅ Payment Successful!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
-                except Exception:
-                    pass
-        
-        return jsonify({"status": "PROCESSED"}), 200
+        key = str(user_id)
+        with daily_stats_lock:
+            row = daily_search_stats.setdefault(key, {
+                "user_id": user_id, "username": username or "no_username",
+                "first_name": first_name or "User", "searches": 0,
+                "number_searches": 0, "telegram_searches": 0, "credits_used": 0,
+                "found": 0, "not_found": 0, "last_query": ""
+            })
+            row["searches"] += 1
+            row["credits_used"] += int(credits_used or 0)
+            if lookup_type == "telegram":
+                row["telegram_searches"] = row.get("telegram_searches", 0) + 1
+            else:
+                row["number_searches"] += 1
+            if found:
+                row["found"] += 1
+            else:
+                row["not_found"] += 1
     except Exception as e:
-        print(f"Webhook error: {e}")
-        return jsonify({"status": "ERROR"}), 500
+        print(f"Daily report record error: {e}")
 
-def keep_alive():
-    def run():
-        app.run(host="0.0.0.0", port=8080, debug=False, use_reloader=False)
-    threading.Thread(target=run, daemon=True).start()
+def build_daily_report_text(stats_snapshot):
+    total_searches = sum(v.get("searches", 0) for v in stats_snapshot.values())
+    total_users = len(stats_snapshot)
+    found = sum(v.get("found", 0) for v in stats_snapshot.values())
+    not_found = sum(v.get("not_found", 0) for v in stats_snapshot.values())
+    number_searches = sum(v.get("number_searches", 0) for v in stats_snapshot.values())
+    telegram_searches = sum(v.get("telegram_searches", 0) for v in stats_snapshot.values())
+    credits_used = sum(v.get("credits_used", 0) for v in stats_snapshot.values())
+    top = sorted(stats_snapshot.values(), key=lambda x: x.get("searches", 0), reverse=True)[:10]
 
-# ==================== DAILY REPORT SCHEDULER ====================
-def generate_daily_search_report():
-    with daily_stats_lock:
-        report_date = datetime.now(IST).strftime("%Y-%m-%d")
-        total_num = len(daily_search_stats.get("number", []))
-        found_num = sum(1 for x in daily_search_stats.get("number", []) if x["found"])
-        total_tg = len(daily_search_stats.get("telegram", []))
-        found_tg = sum(1 for x in daily_search_stats.get("telegram", []) if x["found"])
-        total_id = len(daily_search_stats.get("identity", []))
-        found_id = sum(1 for x in daily_search_stats.get("identity", []) if x["found"])
-        total_ifsc = len(daily_search_stats.get("ifsc", []))
-        found_ifsc = sum(1 for x in daily_search_stats.get("ifsc", []) if x["found"])
-        
-        report = f"📊 *TraceX Daily Report*\n📅 Date: `{report_date}`\n\n"
-        report += f"📱 Number: Total `{total_num}` | Found `{found_num}`\n"
-        report += f"💬 Telegram: Total `{total_tg}` | Found `{found_tg}`\n"
-        report += f"🆔 Identity: Total `{total_id}` | Found `{found_id}`\n"
-        report += f"🏦 IFSC: Total `{total_ifsc}` | Found `{found_ifsc}`\n\n"
-        
-        report += "📝 *Recent Activity (Last 15):*\n"
-        all_activities = []
-        for t, items in daily_search_stats.items():
-            for item in items:
-                all_activities.append(item)
-        all_activities.sort(key=lambda x: x["timestamp"], reverse=True)
-        
-        for act in all_activities[:15]:
-            status = "✅" if act["found"] else "❌"
-            report += f"• `{act['timestamp'][11:16]}` | {act['username']} | {status} ({act['credits_used']}cr)\n"
-        
-        daily_search_stats.clear()
-        return report
+    lines = [
+        "📊 *TRACEX 24H SEARCH REPORT*",
+        "━━━━━━━━━━━━━━━━",
+        f"🕕 Report Time: `{datetime.now(IST).strftime('%Y-%m-%d 06:00 IST')}`",
+        f"👥 Users Searched: `{total_users}`",
+        f"🔍 Total Lookups: `{total_searches}`",
+        f"📱 Number Lookups: `{number_searches}`",
+        f"💬 Telegram Lookups: `{telegram_searches}`",
+        f"💎 Credits Used: `{credits_used}`",
+        f"✅ Found: `{found}`",
+        f"❌ No Data: `{not_found}`",
+        "", "🏆 *TOP SEARCHERS*"
+    ]
+    if not top:
+        lines.append("No searches in last 24 hours.")
+    else:
+        for i, row in enumerate(top, 1):
+            uname = row.get("username") or "no_username"
+            display = f"@{uname}" if uname != "no_username" else row.get("first_name", "User")
+            lines.append(f"{i}. {display} | ID `{row.get('user_id')}` | `{row.get('searches', 0)}` lookups")
+    lines.append("━━━━━━━━━━━━━━━━")
+    return "\n".join(lines)
 
-def send_daily_report_loop():
+def send_daily_search_report_loop():
     while True:
         try:
             now = datetime.now(IST)
             target = now.replace(hour=6, minute=0, second=0, microsecond=0)
             if now >= target:
                 target += timedelta(days=1)
-            sleep_secs = (target - now).total_seconds()
-            time.sleep(sleep_secs)
-            
-            report_text = generate_daily_search_report()
-            send_admin_alert(report_text, parse_mode="Markdown")
+            sleep_seconds = max(60, int((target - now).total_seconds()))
+            time.sleep(sleep_seconds)
+            with daily_stats_lock:
+                snapshot = dict(daily_search_stats)
+                daily_search_stats.clear()
+            bot.send_message(ADMIN_CHANNEL_ID, build_daily_report_text(snapshot), parse_mode="Markdown")
         except Exception as e:
-            print(f"Daily report error: {e}")
-            time.sleep(60)
+            print(f"Daily report loop error: {e}")
+            time.sleep(300)
 
-def send_daily_motivation_loop():
-    while True:
-        try:
-            now = datetime.now(IST)
-            target = now.replace(hour=11, minute=0, second=0, microsecond=0)
-            if now >= target:
-                target += timedelta(days=1)
-            sleep_secs = (target - now).total_seconds()
-            time.sleep(sleep_secs)
-            
-            promo = f"""
-🚀 *TraceX Updates*
-
-• Number Lookup: 5 credits
-• Telegram Lookup: 12 credits
-• Identity Lookup: 15 credits
-• IFSC Lookup: 20 credits
-
-🔗 Web: {WEBSITE_URL}
-👨‍💻 Admin: {ADMIN_USERNAME}
-"""
-            try:
-                bot.send_message(ADMIN_CHANNEL_ID, promo, parse_mode="Markdown", disable_web_page_preview=True)
-            except Exception:
-                pass
-        except Exception as e:
-            print(f"Motivation loop error: {e}")
-            time.sleep(60)
-
-# ==================== MAIN ENTRYPOINT ====================
+# ==================== START BOT ====================
 if __name__ == "__main__":
     print("=" * 50)
-    print(f"🚀 TraceX Engine v{BOT_VERSION}")
-    print(f"Cashfree: {CASHFREE_ENV}")
+    print(f"TraceX Lookup v{BOT_VERSION} is starting...")
+    print(f"Admin ID: {ADMIN_ID}")
+    print(f"Current Pricing: Number = {NUMBER_LOOKUP_COST} credits, Telegram = {TELEGRAM_LOOKUP_COST} credits")
+    print(f"Unlimited Plans: 7 Days = ₹{UNLIMITED_PLANS['u1w']['amount']}, 30 Days = ₹{UNLIMITED_PLANS['u1m']['amount']}")
     print("=" * 50)
     
     keep_alive()
     print("✅ Flask server started")
     
-    threading.Thread(target=send_daily_report_loop, daemon=True).start()
-    threading.Thread(target=send_daily_motivation_loop, daemon=True).start()
+    threading.Thread(target=send_daily_search_report_loop, daemon=True).start()
+    print("✅ Daily report scheduler started")
     
-    print("✅ Bot running! Press Ctrl+C to stop.")
+    print("✅ Bot is running!")
     
     def signal_handler(sig, frame):
-        print("\n🛑 Stopping...")
+        print("\n🛑 Bot stopped")
         sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
@@ -1901,4 +2388,4 @@ if __name__ == "__main__":
             bot.infinity_polling(timeout=60, skip_pending=True)
         except Exception as e:
             print(f"Polling error: {e}")
-            time.sleep(5)
+            time.sleep(10)
