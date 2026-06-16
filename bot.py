@@ -143,9 +143,9 @@ LOOKUP_API_KEY = os.getenv("LOOKUP_API_KEY", "TVB_SGL_053B3AA6").strip()
 LOOKUP_API_SERVICE = os.getenv("LOOKUP_API_SERVICE", "number").strip()
 
 # Updated Lookup APIs
-TELEGRAM_LOOKUP_API_URL = "https://exploitsindia.site//hdhddhjdjddjdjdjdndnddnnccndndhejdmdnnd//telegram.php"
-IDENTITY_LOOKUP_API_URL = "https://exploitsindia.site//hdhddhjdjddjdjdjdndnddnnccndndhejdmdnnd//aadhar.php"
-IFSC_LOOKUP_API_URL = "https://exploitsindia.site//hdhddhjdjddjdjdjdndnddnnccndndhejdmdnnd/ifsc.php"
+TELEGRAM_LOOKUP_API_URL = "https://exploitsindia.site//osint-api/telegram.php"
+IDENTITY_LOOKUP_API_URL = "https://exploitsindia.site//osint-api/aadhar.php"
+IFSC_LOOKUP_API_URL = "https://exploitsindia.site//osint-api/ifsc.php"
 
 # Updated Costs
 NUMBER_LOOKUP_COST = 5
