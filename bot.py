@@ -246,7 +246,7 @@ MAINTENANCE_MODE = False
 
 # ==================== MAIN MENU KEYBOARD ====================
 def get_main_keyboard():
-    """Create main menu with keyboard buttons"""
+    """Create main menu with keyboard buttons (no admin button)"""
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     keyboard.add(
         KeyboardButton("📱 NUMBER LOOKUP"),
@@ -264,6 +264,30 @@ def get_main_keyboard():
         KeyboardButton("🛡️ PROTECTION"),
         KeyboardButton("📢 SUPPORT")
     )
+    return keyboard
+
+def get_main_keyboard_for_user(user_id):
+    """Create main menu with Admin button for admin user"""
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keyboard.add(
+        KeyboardButton("📱 NUMBER LOOKUP"),
+        KeyboardButton("💬 TELEGRAM LOOKUP")
+    )
+    keyboard.add(
+        KeyboardButton("🆔 IDENTITY LOOKUP"),
+        KeyboardButton("🏦 IFSC LOOKUP")
+    )
+    keyboard.add(
+        KeyboardButton("💎 MY CREDITS"),
+        KeyboardButton("🛒 BUY CREDITS")
+    )
+    keyboard.add(
+        KeyboardButton("🛡️ PROTECTION"),
+        KeyboardButton("📢 SUPPORT")
+    )
+    # Show Admin button only for admin
+    if user_id == ADMIN_ID:
+        keyboard.add(KeyboardButton("🛠 ADMIN PANEL"))
     return keyboard
 
 def get_cancel_keyboard():
@@ -677,7 +701,7 @@ def process_telegram_lookup(message):
 
     if username_input == "❌ CANCEL" or username_input == "/cancel":
         user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
     if user_states.get(user_id) != "awaiting_telegram_username":
@@ -691,19 +715,19 @@ def process_telegram_lookup(message):
     
     if not re.match(r'^@?[a-zA-Z0-9_]{5,32}$', username_input):
         bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `12 credits` per search", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
     
     with active_telegram_sessions_lock:
         if user_id in active_telegram_sessions:
             bot.reply_to(message, "⏳ *One Telegram search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
         active_telegram_sessions.add(user_id)
     
@@ -713,7 +737,7 @@ def process_telegram_lookup(message):
     
     if total_credits < TELEGRAM_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* Telegram Lookup costs `{TELEGRAM_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         with active_telegram_sessions_lock:
             active_telegram_sessions.discard(user_id)
         return
@@ -865,7 +889,7 @@ def process_identity_lookup(message):
 
     if aadhar_input == "❌ CANCEL" or aadhar_input == "/cancel":
         user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
     if user_states.get(user_id) != "awaiting_identity_input":
@@ -875,19 +899,19 @@ def process_identity_lookup(message):
 
     if not re.match(r'^\d{12}$', aadhar_input):
         bot.reply_to(message, "❌ *Invalid Aadhar Number!*\n\nEnter a valid 12-digit Aadhar number.\nExample: `123456789012`\n\n💎 Cost: `15 credits` per search", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
     
     with active_identity_sessions_lock:
         if user_id in active_identity_sessions:
             bot.reply_to(message, "⏳ *One Identity search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
         active_identity_sessions.add(user_id)
     
@@ -897,7 +921,7 @@ def process_identity_lookup(message):
     
     if total_credits < IDENTITY_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* Identity Lookup costs `{IDENTITY_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         with active_identity_sessions_lock:
             active_identity_sessions.discard(user_id)
         return
@@ -1025,7 +1049,7 @@ def process_ifsc_lookup(message):
 
     if ifsc_input == "❌ CANCEL" or ifsc_input == "/cancel":
         user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
     if user_states.get(user_id) != "awaiting_ifsc_input":
@@ -1035,19 +1059,19 @@ def process_ifsc_lookup(message):
 
     if not re.match(r'^[A-Z]{4}0[A-Z0-9]{6}$', ifsc_input):
         bot.reply_to(message, "❌ *Invalid IFSC Code!*\n\nEnter a valid IFSC code.\nExample: `HDFC0001325`\n\n💎 Cost: `20 credits` per search", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
     
     with active_ifsc_sessions_lock:
         if user_id in active_ifsc_sessions:
             bot.reply_to(message, "⏳ *One IFSC search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
         active_ifsc_sessions.add(user_id)
     
@@ -1057,7 +1081,7 @@ def process_ifsc_lookup(message):
     
     if total_credits < IFSC_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* IFSC Lookup costs `{IFSC_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         with active_ifsc_sessions_lock:
             active_ifsc_sessions.discard(user_id)
         return
@@ -1834,14 +1858,14 @@ def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number
     """Send static QR image + fixed amount details. Admin verifies manually."""
     plan = get_plan_config(plan_id)
     if not plan:
-        bot.send_message(chat_id, "❌ Invalid plan selected.", reply_markup=get_main_keyboard())
+        bot.send_message(chat_id, "❌ Invalid plan selected.", reply_markup=get_main_keyboard_for_user(user_id))
         return
 
     now_ts = time.time()
     last_ts = payment_session_cooldown.get(user_id, 0)
     remaining = int(PAYMENT_SESSION_COOLDOWN_SECONDS - (now_ts - last_ts))
     if remaining > 0:
-        bot.send_message(chat_id, f"⏳ *QR already generated recently!*\n\nPlease wait `{remaining}` seconds before creating another payment session.", reply_markup=get_main_keyboard(), parse_mode="Markdown")
+        bot.send_message(chat_id, f"⏳ *QR already generated recently!*\n\nPlease wait `{remaining}` seconds before creating another payment session.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode="Markdown")
         return
     payment_session_cooldown[user_id] = now_ts
 
@@ -2119,7 +2143,7 @@ def process_lookup(message):
 
     if raw_phone == "❌ CANCEL" or raw_phone == "/cancel":
         user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
     if user_states.get(user_id) != "awaiting_number":
@@ -2130,19 +2154,19 @@ def process_lookup(message):
 
     if not phone:
         bot.reply_to(message, "❌ *Invalid number!*\n\nEnter Indian mobile number.\nExamples: `9876543210` or `+919876543210`", 
-                    reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
     with active_number_sessions_lock:
         if user_id in active_number_sessions:
-            bot.reply_to(message, "⏳ *One number search already running!*\n\nPlease wait for current search result before starting another.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, "⏳ *One number search already running!*\n\nPlease wait for current search result before starting another.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
         active_number_sessions.add(user_id)
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             active_number_sessions.discard(user_id)
             return
     
@@ -2165,7 +2189,7 @@ def process_lookup(message):
             pass
     
     if total_credits < NUMBER_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         active_number_sessions.discard(user_id)
         return
     
@@ -2303,12 +2327,13 @@ def process_vehicle_lookup(message):
     user_states.pop(user_id, None)
 
     if query == "/cancel":
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
-    bot.reply_to(message, "❌ *Vehicle lookup is currently disabled.*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    bot.reply_to(message, "❌ *Vehicle lookup is currently disabled.*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
 def show_protection_menu(message):
+    user_id = message.from_user.id
     text = f"""
 🛡️ *PROTECTION SERVICES*
 ━━━━━━━━━━━━━━━━━━
@@ -2328,7 +2353,7 @@ def process_protection_payment_input(message, plan_id):
     user_id = message.from_user.id
     if message.text == "❌ CANCEL" or message.text == "/cancel":
         user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
     state = user_states.get(user_id)
@@ -2339,20 +2364,20 @@ def process_protection_payment_input(message, plan_id):
     value = str(message.text or "").strip()
     if plan_id == "protect_number":
         if not re.match(r'^[6-9]\d{9}$', value):
-            bot.reply_to(message, "❌ *Invalid number!*\n\nEnter 10-digit Indian number.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, "❌ *Invalid number!*\n\nEnter 10-digit Indian number.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
         if is_number_protected(value):
-            bot.reply_to(message, f"❌ Already protected: `{value}`", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, f"❌ Already protected: `{value}`", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
     elif plan_id == "protect_telegram":
         if not is_valid_telegram_id(value):
-            bot.reply_to(message, "❌ *Invalid Telegram ID!*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, "❌ *Invalid Telegram ID!*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
         if is_telegram_protected(value):
-            bot.reply_to(message, f"❌ Already protected: `{value}`", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.reply_to(message, f"❌ Already protected: `{value}`", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
     else:
-        bot.reply_to(message, "❌ Invalid protection plan.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Invalid protection plan.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
     send_manual_qr_payment(message.chat.id, user_id, message.from_user.username or "no_username", plan_id, protected_number=value)
 
@@ -2442,6 +2467,7 @@ Type /cancel to abort""",
     send_manual_qr_payment(call.message.chat.id, user_id, username, plan_id)
 
 def show_bot_booking(message):
+    user_id = message.from_user.id
     booking_msg = f"""
 🤖 *CUSTOM BOT BOOKING*
 ━━━━━━━━━━━━━━━━━━
@@ -2531,7 +2557,7 @@ def start(message):
 {footer()}
 """
     
-    bot.send_message(message.chat.id, welcome_msg, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    bot.send_message(message.chat.id, welcome_msg, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
 @bot.message_handler(commands=['cancel'])
 def cancel_command(message):
@@ -2540,7 +2566,7 @@ def cancel_command(message):
         del user_states[user_id]
     if user_id in temp_data:
         del temp_data[user_id]
-    bot.reply_to(message, "❌ Cancelled. Use /start for main menu.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    bot.reply_to(message, "❌ Cancelled. Use /start for main menu.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
 @bot.message_handler(content_types=['photo', 'document'])
 def payment_screenshot_handler(message):
@@ -2551,7 +2577,7 @@ def payment_screenshot_handler(message):
 
     tx_code = state.get("tx_code")
     if tx_code in proof_forwarded_txs:
-        bot.reply_to(message, f"✅ Screenshot already sent to admin for TX `{tx_code}`.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, f"✅ Screenshot already sent to admin for TX `{tx_code}`.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         user_states.pop(user_id, None)
         return
     proof_forwarded_txs.add(tx_code)
@@ -2608,12 +2634,12 @@ def payment_screenshot_handler(message):
             except Exception as dm_forward_error:
                 print(f"Admin DM screenshot copy failed: {dm_forward_error}")
         send_admin_alert(caption, reply_markup=admin_markup, parse_mode='Markdown')
-        bot.reply_to(message, f"✅ Screenshot sent to admin.\n\n🧾 TX: `{tx_code}`\n📦 Plan: `{plan_name}`\n⏳ Wait for manual verification.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, f"✅ Screenshot sent to admin.\n\n🧾 TX: `{tx_code}`\n📦 Plan: `{plan_name}`\n⏳ Wait for manual verification.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         user_states.pop(user_id, None)
     except Exception as e:
         proof_forwarded_txs.discard(tx_code)
         print(f"Payment screenshot forward error: {e}")
-        bot.reply_to(message, f"❌ Could not forward screenshot. Contact {ADMIN_USERNAME}", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, f"❌ Could not forward screenshot. Contact {ADMIN_USERNAME}", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
 @bot.message_handler(commands=['maintenance'])
 def toggle_maintenance(message):
@@ -2745,6 +2771,12 @@ For any issues, contact admin directly.
         markup.add(InlineKeyboardButton("👨‍💻 CONTACT ADMIN", url="https://t.me/gaurav_beniwal_0001"))
         bot.reply_to(message, support_msg, reply_markup=markup, parse_mode='Markdown')
     
+    elif text == "🛠 ADMIN PANEL":
+        if user_id != ADMIN_ID:
+            bot.reply_to(message, "❌ Unauthorized!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+        show_admin_panel(message)
+    
     elif text == "❌ CANCEL":
         user_states.pop(user_id, None)
         temp_data.pop(user_id, None)
@@ -2756,10 +2788,10 @@ For any issues, contact admin directly.
             active_identity_sessions.discard(user_id)
         with active_ifsc_sessions_lock:
             active_ifsc_sessions.discard(user_id)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
     
     else:
-        bot.reply_to(message, "❌ *Unknown command!*\n\nUse /start to see the main menu.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+        bot.reply_to(message, "❌ *Unknown command!*\n\nUse /start to see the main menu.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
@@ -2774,7 +2806,7 @@ def callback_handler(call):
         if is_channel_member(user_id):
             bot.answer_callback_query(call.id, "Joined verified ✅")
             try:
-                bot.edit_message_text("✅ *Joined verified!*\n\nUse /start to open bot menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+                bot.edit_message_text("✅ *Joined verified!*\n\nUse /start to open bot menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode="Markdown")
             except Exception:
                 bot.send_message(call.message.chat.id, "✅ Joined verified! Use /start")
         else:
@@ -2788,12 +2820,12 @@ def callback_handler(call):
     
     if call.data == "main_menu":
         try:
-            bot.edit_message_text("🏠 *MAIN MENU*", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.edit_message_text("🏠 *MAIN MENU*", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         except Exception:
             try:
-                bot.edit_message_caption("🏠 *MAIN MENU*", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                bot.edit_message_caption("🏠 *MAIN MENU*", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             except Exception:
-                bot.send_message(call.message.chat.id, "🏠 *MAIN MENU*", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                bot.send_message(call.message.chat.id, "🏠 *MAIN MENU*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         bot.answer_callback_query(call.id)
     
     elif call.data == "cancel":
@@ -2808,12 +2840,12 @@ def callback_handler(call):
         with active_ifsc_sessions_lock:
             active_ifsc_sessions.discard(user_id)
         try:
-            bot.edit_message_text("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+            bot.edit_message_text("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         except Exception:
             try:
-                bot.edit_message_caption("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                bot.edit_message_caption("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             except Exception:
-                bot.send_message(call.message.chat.id, "❌ Cancelled. Use /start for main menu.", reply_markup=get_main_keyboard(), parse_mode='Markdown')
+                bot.send_message(call.message.chat.id, "❌ Cancelled. Use /start for main menu.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         bot.answer_callback_query(call.id, "Cancelled")
     
     elif call.data == "lookup":
@@ -3155,7 +3187,7 @@ def process_admin_add(message):
         return
     user_states.pop(user_id, None)
     if message.text == "/cancel":
-        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard())
+        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard_for_user(user_id))
         return
     try:
         parts = message.text.split()
@@ -3196,7 +3228,7 @@ def process_admin_remove(message):
         return
     user_states.pop(user_id, None)
     if message.text == "/cancel":
-        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard())
+        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard_for_user(user_id))
         return
     try:
         parts = message.text.split()
@@ -3233,7 +3265,7 @@ def process_admin_ban(message):
     if user_id in user_states:
         del user_states[user_id]
     if message.text == "/cancel":
-        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard())
+        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard_for_user(user_id))
         return
     try:
         target_user = int(message.text.strip())
@@ -3253,7 +3285,7 @@ def process_admin_unban(message):
     if user_id in user_states:
         del user_states[user_id]
     if message.text == "/cancel":
-        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard())
+        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard_for_user(user_id))
         return
     try:
         target_user = int(message.text.strip())
@@ -3273,7 +3305,7 @@ def process_admin_broadcast(message):
     if user_id in user_states:
         del user_states[user_id]
     if message.text == "/cancel":
-        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard())
+        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard_for_user(user_id))
         return
     broadcast_text = (message.text or message.caption or "").strip()
     markup = InlineKeyboardMarkup()
@@ -3288,7 +3320,7 @@ def process_admin_giveaway(message):
     if user_id in user_states:
         del user_states[user_id]
     if message.text == "/cancel":
-        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard())
+        bot.reply_to(message, "Cancelled", reply_markup=get_main_keyboard_for_user(user_id))
         return
     try:
         credits = int(message.text.strip())
@@ -3306,7 +3338,7 @@ def confirm_broadcast(call):
         return
     bot.answer_callback_query(call.id)
     if user_id not in temp_data:
-        bot.edit_message_text("❌ Broadcast cancelled. No data found.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard())
+        bot.edit_message_text("❌ Broadcast cancelled. No data found.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id))
         return
     broadcast_text = temp_data[user_id]['broadcast_text']
     users = get_all_users()
@@ -3335,7 +3367,7 @@ def confirm_broadcast(call):
 • 📝 Total: `{len(users)}` users
 ⏱️ Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
 """
-    bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
     del temp_data[user_id]
 
 def confirm_giveaway(call):
@@ -3345,7 +3377,7 @@ def confirm_giveaway(call):
         return
     bot.answer_callback_query(call.id)
     if user_id not in temp_data:
-        bot.edit_message_text("❌ Giveaway cancelled. No data found.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard())
+        bot.edit_message_text("❌ Giveaway cancelled. No data found.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id))
         return
     credits = temp_data[user_id]['giveaway_credits']
     bot.edit_message_text(f"🎁 *Processing Giveaway...*\n\nGiving `{credits}` credits to all users...", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
@@ -3359,7 +3391,7 @@ def confirm_giveaway(call):
 💎 Total Credits Distributed: `{success * credits}`
 ⏱️ Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
 """
-    bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+    bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
     del temp_data[user_id]
 
 @bot.message_handler(commands=['verify'])
