@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 7.0.0 - New APIs, Updated Pricing, Multi-Channel Verification
+Version: 7.0.1 - Fixed Channel Verification
 """
 
 import os
@@ -135,7 +135,7 @@ BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
 ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
-BOT_VERSION = "7.0.0"
+BOT_VERSION = "7.0.1"
 
 # Updated Lookup APIs
 NUMBER_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/lookup"
@@ -345,6 +345,11 @@ def maintenance_callback(call):
     bot.answer_callback_query(call.id, "Bot under maintenance 🛠️", show_alert=True)
 
 # ==================== UI COMPONENTS ====================
+WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
+GROUP_LINK = "https://t.me/Gaurav_beni_0001"
+PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
+COOLDOWN_SECONDS = 3
+
 def footer():
     return f"\n\n━━━━━━━━━━━━━━━━\n🌐 Website: {WEBSITE_URL}\n⚡ Instant credits add • Lower credit cost • More accurate search\n👨‍💻 Admin: {ADMIN_USERNAME}\n👥 Group: [Join Community]({GROUP_LINK})"
 
@@ -378,7 +383,7 @@ def join_required_markup():
 def is_all_channels_member(user_id):
     """Check if user has joined ALL required channels. Admin bypasses."""
     if user_id == ADMIN_ID:
-        return True
+        return []  # Return empty list for admin (no missing channels)
     missing_channels = []
     for channel in REQUIRED_CHANNELS:
         try:
@@ -408,7 +413,7 @@ def get_missing_channels_message(missing_channels):
 def send_join_required(chat_id):
     """Send join required message for all channels"""
     missing = is_all_channels_member(chat_id)
-    if missing:
+    if missing:  # If there are missing channels
         msg = get_missing_channels_message(missing)
         bot.send_message(
             chat_id,
@@ -1950,11 +1955,6 @@ def get_recent_transactions(limit=20):
         return []
 
 # ==================== MANUAL QR PAYMENT FUNCTIONS ====================
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
-GROUP_LINK = "https://t.me/Gaurav_beni_0001"
-PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
-COOLDOWN_SECONDS = 3
-
 def get_plan_config(plan_id):
     return PLAN_CONFIG.get(str(plan_id or "").strip())
 
@@ -2748,7 +2748,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 7.0"
+    return "TraceX Bot Running - Version 7.0.1"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
