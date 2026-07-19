@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 7.0.2 - Fixed Channel Verification & Search Issues
+Version: 7.0.3 - Raw Response Pretty Print
 """
 
 import os
@@ -135,7 +135,7 @@ BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
 ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
-BOT_VERSION = "7.0.2"
+BOT_VERSION = "7.0.3"
 
 # Updated Lookup APIs
 NUMBER_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/lookup"
@@ -494,7 +494,7 @@ def call_api_with_retry(url, params=None, max_retries=3, timeout=30):
                 try:
                     return response.json(), None
                 except:
-                    return {"response": response.text}, None
+                    return {"raw_response": response.text}, None
             elif response.status_code in [429, 500, 502, 503, 504]:
                 time.sleep(2 * (attempt + 1))
                 continue
@@ -570,8 +570,83 @@ def call_email_lookup_api(email):
         "query", email.lower()
     )
 
-def format_api_response(data, lookup_type, query, user_id, cost, unlimited_active=False, unlimited_expiry=None):
-    """Format API response in pretty print"""
+def format_raw_response(data, indent=2):
+    """Format any raw response data into a pretty readable format"""
+    if data is None:
+        return "No data received"
+    
+    # If it's a string, try to parse as JSON first
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except:
+            # If not JSON, return as is (but remove branding)
+            return remove_branding(data)
+    
+    # If it's a list, format each item
+    if isinstance(data, list):
+        if not data:
+            return "Empty list"
+        result = ""
+        for i, item in enumerate(data, 1):
+            if isinstance(item, dict):
+                result += f"\n📌 *Item {i}*:\n"
+                for key, value in item.items():
+                    if isinstance(value, (dict, list)):
+                        result += f"   • {key}: {json.dumps(value, indent=2)}\n"
+                    else:
+                        result += f"   • {key}: `{value}`\n"
+            else:
+                result += f"\n📌 *Item {i}*: `{item}`\n"
+        return result
+    
+    # If it's a dict, format all key-value pairs
+    if isinstance(data, dict):
+        # Remove any branding from the response
+        result = ""
+        
+        # Check for common response patterns
+        if "status" in data:
+            status = data.get("status", "N/A")
+            status_emoji = "✅" if str(status).lower() in ["success", "true", "1"] else "❌"
+            result += f"📊 *Status*: {status_emoji} `{status}`\n\n"
+        
+        if "message" in data:
+            result += f"💬 *Message*: {remove_branding(str(data['message']))}\n\n"
+        
+        # Process all other fields
+        for key, value in data.items():
+            if key in ["status", "message"]:
+                continue
+            if isinstance(value, dict):
+                result += f"\n📂 *{key.upper()}*:\n"
+                for k, v in value.items():
+                    if isinstance(v, (dict, list)):
+                        result += f"   • {k}: {json.dumps(v, indent=2)}\n"
+                    else:
+                        result += f"   • {k}: `{v}`\n"
+            elif isinstance(value, list):
+                result += f"\n📂 *{key.upper()}*:\n"
+                for item in value:
+                    if isinstance(item, dict):
+                        for k, v in item.items():
+                            if isinstance(v, (dict, list)):
+                                result += f"   • {k}: {json.dumps(v, indent=2)}\n"
+                            else:
+                                result += f"   • {k}: `{v}`\n"
+                    else:
+                        result += f"   • `{item}`\n"
+            else:
+                if value is not None and value != "":
+                    result += f"📌 {key}: `{remove_branding(str(value))}`\n"
+        
+        return result
+    
+    # Fallback for other types
+    return remove_branding(str(data))
+
+def format_lookup_response(result, query, lookup_type, user_id, cost, unlimited_active=False, unlimited_expiry=None):
+    """Format the final lookup response with pretty printed raw data"""
     output = f"""
 🔍 *{lookup_type.upper()} LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -580,30 +655,17 @@ def format_api_response(data, lookup_type, query, user_id, cost, unlimited_activ
 
 """
     
-    if isinstance(data, dict):
-        if "response" in data and isinstance(data["response"], str):
-            clean_response = remove_branding(data["response"])
-            output += clean_response
+    # Format the raw response
+    if isinstance(result, dict):
+        # Check if there's a raw_response or just use the result directly
+        if "raw_response" in result:
+            formatted_data = format_raw_response(result["raw_response"])
         else:
-            for key, value in data.items():
-                if key not in ["key", "api", "query"]:
-                    if isinstance(value, dict):
-                        output += f"\n📂 *{key.upper()}*:\n"
-                        for k, v in value.items():
-                            output += f"   • {k}: `{v}`\n"
-                    elif isinstance(value, list):
-                        output += f"\n📂 *{key.upper()}*:\n"
-                        for item in value:
-                            if isinstance(item, dict):
-                                for k, v in item.items():
-                                    output += f"   • {k}: `{v}`\n"
-                            else:
-                                output += f"   • `{item}`\n"
-                    else:
-                        if value:
-                            output += f"📌 {key}: `{value}`\n"
+            formatted_data = format_raw_response(result)
     else:
-        output += str(data)
+        formatted_data = format_raw_response(result)
+    
+    output += formatted_data
     
     output += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     
@@ -664,52 +726,6 @@ def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, pars
     return sent_messages
 
 # ==================== TELEGRAM LOOKUP FUNCTIONS ====================
-def format_telegram_lookup_result(result, username, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Telegram lookup result for display"""
-    if isinstance(result, dict):
-        clean_response = remove_branding(str(result))
-        output = f"""
-🔍 *TELEGRAM LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📌 Username: `{username}`
-
-{clean_response}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    else:
-        output = f"""
-🔍 *TELEGRAM LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📌 Username: `{username}`
-
-{remove_branding(str(result))}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{TELEGRAM_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_telegram_lookup(message):
     """Process Telegram username lookup"""
     user_id = message.from_user.id
@@ -761,7 +777,6 @@ def process_telegram_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Telegram...*", parse_mode='Markdown')
     
-    # Animated loading
     for anim in ["🔍", "🔎", "🔍"]:
         time.sleep(0.8)
         bot.edit_message_text(f"{anim} *Searching Telegram...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
@@ -779,10 +794,12 @@ def process_telegram_lookup(message):
     # Check if result has data
     has_data = False
     if isinstance(result, dict):
-        if "response" in result and result["response"]:
+        if "raw_response" in result and result["raw_response"]:
             has_data = True
-        elif len(result) > 1:
+        elif len(result) > 0:
             has_data = True
+    elif result:
+        has_data = True
     
     if not has_data:
         output = f"""
@@ -817,7 +834,7 @@ def process_telegram_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_telegram_lookup_result(result, username_clean, user_id, unlimited_active, unlimited_expiry)
+    output = format_lookup_response(result, username_clean, "Telegram", user_id, TELEGRAM_LOOKUP_COST, unlimited_active, unlimited_expiry)
     markup = telegram_lookup_protection_markup()
     
     sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
@@ -891,10 +908,12 @@ def process_pan_lookup(message):
     
     has_data = False
     if isinstance(result, dict):
-        if "response" in result and result["response"]:
+        if "raw_response" in result and result["raw_response"]:
             has_data = True
-        elif len(result) > 1:
+        elif len(result) > 0:
             has_data = True
+    elif result:
+        has_data = True
     
     if not has_data:
         output = f"""
@@ -928,7 +947,7 @@ def process_pan_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_api_response(result, "PAN Card", pan_input, user_id, PAN_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_lookup_response(result, pan_input, "PAN Card", user_id, PAN_LOOKUP_COST, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1008,10 +1027,12 @@ def process_vehicle_lookup(message):
     
     has_data = False
     if isinstance(result, dict):
-        if "response" in result and result["response"]:
+        if "raw_response" in result and result["raw_response"]:
             has_data = True
-        elif len(result) > 1:
+        elif len(result) > 0:
             has_data = True
+    elif result:
+        has_data = True
     
     if not has_data:
         output = f"""
@@ -1041,7 +1062,7 @@ def process_vehicle_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_api_response(result, "Vehicle", vehicle_input, user_id, VEHICLE_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_lookup_response(result, vehicle_input, "Vehicle", user_id, VEHICLE_LOOKUP_COST, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1120,10 +1141,12 @@ def process_vehicle_owner_lookup(message):
     
     has_data = False
     if isinstance(result, dict):
-        if "response" in result and result["response"]:
+        if "raw_response" in result and result["raw_response"]:
             has_data = True
-        elif len(result) > 1:
+        elif len(result) > 0:
             has_data = True
+    elif result:
+        has_data = True
     
     if not has_data:
         output = f"""
@@ -1153,7 +1176,7 @@ def process_vehicle_owner_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_api_response(result, "Vehicle Owner", vehicle_input, user_id, VEHICLE_OWNER_COST, unlimited_active, unlimited_expiry)
+    output = format_lookup_response(result, vehicle_input, "Vehicle Owner", user_id, VEHICLE_OWNER_COST, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1232,10 +1255,12 @@ def process_email_lookup(message):
     
     has_data = False
     if isinstance(result, dict):
-        if "response" in result and result["response"]:
+        if "raw_response" in result and result["raw_response"]:
             has_data = True
-        elif len(result) > 1:
+        elif len(result) > 0:
             has_data = True
+    elif result:
+        has_data = True
     
     if not has_data:
         output = f"""
@@ -1269,7 +1294,7 @@ def process_email_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_api_response(result, "Email", email_input, user_id, EMAIL_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_lookup_response(result, email_input, "Email", user_id, EMAIL_LOOKUP_COST, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1285,40 +1310,6 @@ def process_email_lookup(message):
         active_sessions.discard(user_id)
 
 # ==================== IDENTITY LOOKUP FUNCTION ====================
-def format_identity_lookup_result(response_text, query, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Identity lookup result"""
-    clean_response = remove_branding(response_text)
-    output = f"""
-🆔 *IDENTITY LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Query: `{query}`
-
-{clean_response}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{IDENTITY_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_identity_lookup(message):
     """Process Identity (Aadhar) lookup"""
     user_id = message.from_user.id
@@ -1411,7 +1402,7 @@ def process_identity_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_identity_lookup_result(response_text, aadhar_input, user_id, unlimited_active, unlimited_expiry)
+    output = format_lookup_response({"raw_response": response_text}, aadhar_input, "Identity", user_id, IDENTITY_LOOKUP_COST, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1427,40 +1418,6 @@ def process_identity_lookup(message):
         active_sessions.discard(user_id)
 
 # ==================== IFSC LOOKUP FUNCTION ====================
-def format_ifsc_lookup_result(response_text, query, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the IFSC lookup result"""
-    clean_response = remove_branding(response_text)
-    output = f"""
-🏦 *IFSC LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-IFSC Code: `{query.upper()}`
-
-{clean_response}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{IFSC_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_ifsc_lookup(message):
     """Process IFSC lookup"""
     user_id = message.from_user.id
@@ -1553,7 +1510,7 @@ def process_ifsc_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_ifsc_lookup_result(response_text, ifsc_input, user_id, unlimited_active, unlimited_expiry)
+    output = format_lookup_response({"raw_response": response_text}, ifsc_input, "IFSC", user_id, IFSC_LOOKUP_COST, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -2451,52 +2408,6 @@ def send_daily_search_report_loop():
             time.sleep(300)
 
 # ==================== NUMBER LOOKUP FUNCTIONS ====================
-def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format API/cache result."""
-    if isinstance(result, dict):
-        clean_response = remove_branding(str(result))
-        output = f"""
-🔍 *NUMBER LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━
-
-📱 Number: `{phone}`
-
-{clean_response}
-
-━━━━━━━━━━━━━━━━━━
-"""
-    else:
-        output = f"""
-🔍 *NUMBER LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━
-
-📱 Number: `{phone}`
-
-{remove_branding(str(result))}
-
-━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{NUMBER_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_lookup(message):
     user_id = message.from_user.id
     raw_phone = str(message.text or "").strip()
@@ -2590,7 +2501,7 @@ You can also protect your number for ₹99!
         
         increment_total_searches(user_id)
         
-        output = format_lookup_result(cached_result, phone, user_id, unlimited_active, unlimited_expiry)
+        output = format_lookup_response(cached_result, phone, "Number", user_id, NUMBER_LOOKUP_COST, unlimited_active, unlimited_expiry)
         
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -2618,10 +2529,12 @@ You can also protect your number for ₹99!
     # Check if result has data
     has_data = False
     if isinstance(result, dict):
-        if "response" in result and result["response"]:
+        if "raw_response" in result and result["raw_response"]:
             has_data = True
-        elif len(result) > 1:
+        elif len(result) > 0:
             has_data = True
+    elif result:
+        has_data = True
 
     if has_data:
         if not unlimited_active:
@@ -2633,7 +2546,7 @@ You can also protect your number for ₹99!
         
         increment_total_searches(user_id)
         save_cached_result(phone, result)
-        output = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
+        output = format_lookup_response(result, phone, "Number", user_id, NUMBER_LOOKUP_COST, unlimited_active, unlimited_expiry)
         
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -2748,7 +2661,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 7.0.2"
+    return "TraceX Bot Running - Version 7.0.3"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -3840,8 +3753,7 @@ def confirm_broadcast(call):
 ✅ *Broadcast Complete!* 📢
 📊 *Statistics:*
 • ✅ Sent: `{success}` users
-• ❌ Failed: `{failed}` users
-• 📝 Total: `{len(users)}` users
+• ❌ Failed: `{failed}` users• 📝 Total: `{len(users)}` users
 ⏱️ Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
 """
     bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
@@ -3939,6 +3851,7 @@ if __name__ == "__main__":
     print("   • 🔍 Vehicle to Owner Number (10 Credits)")
     print("   • Updated APIs for all lookups")
     print("   • 4 Channel Verification System")
+    print("   • Raw Response Pretty Print")
     print("   • Updated Pricing:")
     print("     • Number: 2 Credits")
     print("     • Telegram: 5 Credits")
