@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 7.0.1 - Fixed Channel Verification
+Version: 7.0.2 - Fixed Channel Verification & Search Issues
 """
 
 import os
@@ -135,7 +135,7 @@ BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
 ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
-BOT_VERSION = "7.0.1"
+BOT_VERSION = "7.0.2"
 
 # Updated Lookup APIs
 NUMBER_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/lookup"
@@ -411,7 +411,7 @@ def get_missing_channels_message(missing_channels):
     return msg
 
 def send_join_required(chat_id):
-    """Send join required message for all channels"""
+    """Send join required message for all channels. Returns True if user is missing channels."""
     missing = is_all_channels_member(chat_id)
     if missing:  # If there are missing channels
         msg = get_missing_channels_message(missing)
@@ -1370,7 +1370,7 @@ def process_identity_lookup(message):
         time.sleep(0.8)
         bot.edit_message_text(f"{anim} *Searching Identity records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
     
-    # Placeholder for identity lookup - using existing logic
+    # Identity lookup using existing API
     result, error = call_api_with_retry("https://exploitsindia.site//osint-api/aadhar.php", {"exploits": aadhar_input})
     
     if not result:
@@ -1512,7 +1512,7 @@ def process_ifsc_lookup(message):
         time.sleep(0.8)
         bot.edit_message_text(f"{anim} *Searching IFSC records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
     
-    # Placeholder for IFSC lookup - using existing logic
+    # IFSC lookup using existing API
     result, error = call_api_with_retry("https://exploitsindia.site//osint-api/ifsc.php", {"exploits": ifsc_input})
     
     if not result:
@@ -2748,7 +2748,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 7.0.1"
+    return "TraceX Bot Running - Version 7.0.2"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -2922,9 +2922,17 @@ def start(message):
 {footer()}
 """
     
-    # Check channel membership
-    if send_join_required(message.chat.id):
-        bot.send_message(message.chat.id, welcome_msg, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+    # Check channel membership - store result but send welcome either way
+    missing = is_all_channels_member(user_id)
+    if missing:
+        msg = get_missing_channels_message(missing)
+        bot.send_message(
+            message.chat.id,
+            msg,
+            reply_markup=join_required_markup(),
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
     else:
         bot.send_message(message.chat.id, welcome_msg, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
@@ -3044,7 +3052,16 @@ def text_handler(message):
         return
 
     # Check channel membership - silently check every time
-    if send_join_required(message.chat.id):
+    missing = is_all_channels_member(user_id)
+    if missing:
+        msg = get_missing_channels_message(missing)
+        bot.send_message(
+            message.chat.id,
+            msg,
+            reply_markup=join_required_markup(),
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
         return
 
     text = message.text.strip()
@@ -3220,8 +3237,14 @@ def callback_handler(call):
         return
 
     # Check channel membership for all other actions
-    if send_join_required(call.message.chat.id):
+    missing = is_all_channels_member(user_id)
+    if missing:
+        msg = get_missing_channels_message(missing)
         bot.answer_callback_query(call.id, "Please join all channels first", show_alert=True)
+        try:
+            bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=join_required_markup(), parse_mode="Markdown")
+        except Exception:
+            bot.send_message(call.message.chat.id, msg, reply_markup=join_required_markup(), parse_mode="Markdown")
         return
     
     if call.data == "main_menu":
