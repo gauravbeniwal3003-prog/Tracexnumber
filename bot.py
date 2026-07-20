@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 7.0.3 - Raw Response Pretty Print
+Version: 7.0.0 - New Features, Multiple Channel Verification, Updated Pricing
 """
 
 import os
@@ -135,42 +135,48 @@ BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
 ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
-BOT_VERSION = "7.0.3"
+BOT_VERSION = "7.0.0"
 
 # Updated Lookup APIs
-NUMBER_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/lookup"
-TELEGRAM_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/telegram"
-PAN_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/pancard"
-VEHICLE_OWNER_API_URL = "https://tracexdata-api.onrender.com/api/veh-owner-num"
-VEHICLE_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/vehicle"
-EMAIL_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/email"
+LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/lookup?key=Pvttbott&number={number}"
+TELEGRAM_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/telegram?key=Pvtbott&api=gaurav_beniwal_0001&query={username}"
+PAN_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/pancard?key=Pvtbot&query={pan}"
+VEHICLE_OWNER_API_URL = "https://tracexdata-api.onrender.com/api/veh-owner-num?key=Pvtbottt&query={vehicle}"
+VEHICLE_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/vehicle?key=Pvtbotttt&query={vehicle}"
+EMAIL_LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/email?key=Pvttbot&query={email}"
 
-# API Keys
-NUMBER_API_KEY = "Pvttbott"
-TELEGRAM_API_KEY = "Pvtbott"
-PAN_API_KEY = "Pvtbot"
-VEHICLE_OWNER_API_KEY = "Pvtbottt"
-VEHICLE_API_KEY = "Pvtbotttt"
-EMAIL_API_KEY = "Pvttbot"
-
-# Updated Costs (1 credit = 1 unit)
+# Updated Costs - 1 credit = ₹1
 NUMBER_LOOKUP_COST = 2
 TELEGRAM_LOOKUP_COST = 5
-PAN_LOOKUP_COST = 5
-VEHICLE_OWNER_COST = 10
-VEHICLE_LOOKUP_COST = 5
 EMAIL_LOOKUP_COST = 20
+VEHICLE_LOOKUP_COST = 5
+VEHICLE_OWNER_COST = 10
 IDENTITY_LOOKUP_COST = 5
+PAN_LOOKUP_COST = 5
 IFSC_LOOKUP_COST = 3
 
 MAX_LOOKUP_RESULTS = 20
 TELEGRAM_SAFE_LIMIT = 3900
 
-# Updated Plan Configuration - New Pricing
+COOLDOWN_SECONDS = 3
+GROUP_LINK = "https://t.me/Gaurav_beni_0001"
+
+# Required Channels for verification
+REQUIRED_CHANNELS = [
+    {"name": "Beniwal Mods", "link": "https://t.me/beniwalmods", "username": "@beniwalmods"},
+    {"name": "Gaurav Beniwal", "link": "https://t.me/Gaurav_beni_0001", "username": "@Gaurav_beni_0001"},
+    {"name": "Beniwal Zone", "link": "https://t.me/BeniwalzonYT", "username": "@BeniwalzonYT"},
+    {"name": "Gaurav Beniwal Chat", "link": "https://t.me/gauravbeniwalchat", "username": "@gauravbeniwalchat"},
+]
+
+PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
+WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
+
+# Updated Plan Configuration - 1 credit = ₹1
 PLAN_CONFIG = {
-    "c40": {"amount": 20, "credits": 40, "unlimited_minutes": 0, "payment_for": "credits", "label": "40 Credits"},
-    "c120": {"amount": 50, "credits": 120, "unlimited_minutes": 0, "payment_for": "credits", "label": "120 Credits"},
-    "c400": {"amount": 100, "credits": 400, "unlimited_minutes": 0, "payment_for": "credits", "label": "400 Credits"},
+    "c40": {"amount": 40, "credits": 40, "unlimited_minutes": 0, "payment_for": "credits", "label": "40 Credits"},
+    "c120": {"amount": 120, "credits": 120, "unlimited_minutes": 0, "payment_for": "credits", "label": "120 Credits"},
+    "c400": {"amount": 400, "credits": 400, "unlimited_minutes": 0, "payment_for": "credits", "label": "400 Credits"},
     "u1h": {"amount": 49, "credits": 0, "unlimited_minutes": 60, "payment_for": "unlimited", "label": "1 Hour Unlimited"},
     "u1d": {"amount": 99, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited"},
     "u1w": {"amount": 499, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited"},
@@ -180,26 +186,13 @@ PLAN_CONFIG = {
     "bot_booking": {"amount": 399, "credits": 0, "unlimited_minutes": 0, "payment_for": "bot_booking", "label": "Custom Bot Booking Add-on"},
 }
 
-# Required Channels for Verification
-REQUIRED_CHANNELS = [
-    {"name": "Beniwal Mods", "url": "https://t.me/beniwalmods", "username": "@beniwalmods"},
-    {"name": "Gaurav Beniwal", "url": "https://t.me/Gaurav_beni_0001", "username": "@Gaurav_beni_0001"},
-    {"name": "Beniwal Zone", "url": "https://t.me/BeniwalzonYT", "username": "@BeniwalzonYT"},
-    {"name": "Gaurav Beniwal Chat", "url": "https://t.me/gauravbeniwalchat", "username": "@gauravbeniwalchat"}
-]
+# Supabase Configuration
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# Branding patterns to remove (restricted words)
+# Branding patterns to remove
 BRANDING_PATTERNS = [
-    r'exploits',
-    r'userxinfo',
-    r'tech vishal',
-    r'techvishal',
-    r'vishal',
-    r'exploit',
-    r'Developer[:\s]*@[a-zA-Z0-9_]+',
-    r'Developed By[:\s]*@[a-zA-Z0-9_]+',
-    r'By[:\s]*@[a-zA-Z0-9_]+',
-    r'API[:\s]*@[a-zA-Z0-9_]+',
     r'💳 BUY API\s*:\s*@[a-zA-Z0-9_]+\s*',
     r'🆘 SUPPORT\s*:\s*@[a-zA-Z0-9_]+\s*',
     r'BUY API\s*:\s*@[a-zA-Z0-9_]+\s*',
@@ -222,11 +215,6 @@ def validate_startup_config():
         print("Set them in Render/Termux before running the bot.")
         sys.exit(1)
 
-# Supabase Configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
 validate_startup_config()
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None, threaded=True)
 
@@ -242,8 +230,8 @@ user_cooldown = {}
 temp_data = {}
 payment_session_cooldown = {}
 PAYMENT_SESSION_COOLDOWN_SECONDS = 60
+active_sessions = {}
 active_sessions_lock = threading.Lock()
-active_sessions = set()
 proof_forwarded_txs = set()
 
 # 24-hour search summary storage
@@ -267,11 +255,11 @@ def get_main_keyboard():
     )
     keyboard.add(
         KeyboardButton("📧 EMAIL LOOKUP"),
-        KeyboardButton("🪪 PAN LOOKUP")
+        KeyboardButton("🚗 VEHICLE LOOKUP")
     )
     keyboard.add(
-        KeyboardButton("🚗 VEHICLE LOOKUP"),
-        KeyboardButton("🔍 VEHICLE OWNER")
+        KeyboardButton("📋 PAN CARD LOOKUP"),
+        KeyboardButton("📱 VEHICLE TO OWNER")
     )
     keyboard.add(
         KeyboardButton("💎 MY CREDITS"),
@@ -296,11 +284,11 @@ def get_main_keyboard_for_user(user_id):
     )
     keyboard.add(
         KeyboardButton("📧 EMAIL LOOKUP"),
-        KeyboardButton("🪪 PAN LOOKUP")
+        KeyboardButton("🚗 VEHICLE LOOKUP")
     )
     keyboard.add(
-        KeyboardButton("🚗 VEHICLE LOOKUP"),
-        KeyboardButton("🔍 VEHICLE OWNER")
+        KeyboardButton("📋 PAN CARD LOOKUP"),
+        KeyboardButton("📱 VEHICLE TO OWNER")
     )
     keyboard.add(
         KeyboardButton("💎 MY CREDITS"),
@@ -322,17 +310,10 @@ def get_cancel_keyboard():
 
 # ==================== MAINTENANCE MODE ====================
 MAINTENANCE_MESSAGE = """
-⚠️ *BOT UNDER MAINTENANCE* 🛠️
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-TraceX is currently under maintenance and upgrades.
-
+⚠️ BOT UNDER MAINTENANCE
+🛠️ TraceX is currently under maintenance and upgrades.
 ⏰ Please try again later.
-
-📢 Join our official channels for updates:
-• https://t.me/beniwalmods
-• https://t.me/Gaurav_beni_0001
-
+📢 Till then, join our official channels for updates and announcements.
 🙏 Thanks for your patience.
 """
 
@@ -345,11 +326,6 @@ def maintenance_callback(call):
     bot.answer_callback_query(call.id, "Bot under maintenance 🛠️", show_alert=True)
 
 # ==================== UI COMPONENTS ====================
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
-GROUP_LINK = "https://t.me/Gaurav_beni_0001"
-PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
-COOLDOWN_SECONDS = 3
-
 def footer():
     return f"\n\n━━━━━━━━━━━━━━━━\n🌐 Website: {WEBSITE_URL}\n⚡ Instant credits add • Lower credit cost • More accurate search\n👨‍💻 Admin: {ADMIN_USERNAME}\n👥 Group: [Join Community]({GROUP_LINK})"
 
@@ -372,58 +348,83 @@ def send_admin_alert(text, reply_markup=None, parse_mode="Markdown"):
 def header(title, emoji="🚀"):
     return f"{emoji} *{title}*\n━━━━━━━━━━━━━━━━\n"
 
-def join_required_markup():
-    """Create inline keyboard for channel verification"""
-    markup = InlineKeyboardMarkup(row_width=2)
+def get_channel_join_markup():
+    """Create inline keyboard for joining required channels"""
+    markup = InlineKeyboardMarkup(row_width=1)
     for channel in REQUIRED_CHANNELS:
-        markup.add(InlineKeyboardButton(f"📢 {channel['name']}", url=channel['url']))
+        markup.add(InlineKeyboardButton(f"📢 Join {channel['name']}", url=channel['link']))
     markup.add(InlineKeyboardButton("✅ I HAVE JOINED ALL", callback_data="check_all_join"))
     return markup
 
-def is_all_channels_member(user_id):
-    """Check if user has joined ALL required channels. Admin bypasses."""
-    if user_id == ADMIN_ID:
-        return []  # Return empty list for admin (no missing channels)
-    missing_channels = []
-    for channel in REQUIRED_CHANNELS:
-        try:
-            member = bot.get_chat_member(channel['username'], user_id)
-            if member.status not in ["member", "administrator", "creator"]:
-                missing_channels.append(channel)
-        except Exception as e:
-            print(f"Channel membership check error for {channel['name']}: {e}")
-            missing_channels.append(channel)
-    return missing_channels
-
-def get_missing_channels_message(missing_channels):
-    """Generate message for missing channels"""
-    if not missing_channels:
-        return None
-    
-    msg = "🔒 *JOIN REQUIRED CHANNELS* 🔒\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    msg += "⚠️ You must join ALL of our official channels to use this bot.\n\n"
-    msg += "📢 *Missing Channels:*\n"
+def get_channel_join_markup_for_missing(missing_channels):
+    """Create inline keyboard for missing channels only"""
+    markup = InlineKeyboardMarkup(row_width=1)
     for channel in missing_channels:
-        msg += f"• {channel['name']}: {channel['url']}\n"
-    msg += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    msg += "✅ Join all channels above, then click the *'I HAVE JOINED ALL'* button to continue.\n\n"
-    msg += "❌ If you leave any channel after joining, you will be asked to join again."
-    return msg
+        markup.add(InlineKeyboardButton(f"📢 Join {channel['name']}", url=channel['link']))
+    markup.add(InlineKeyboardButton("✅ I HAVE JOINED ALL", callback_data="check_all_join"))
+    return markup
 
-def send_join_required(chat_id):
-    """Send join required message for all channels. Returns True if user is missing channels."""
-    missing = is_all_channels_member(chat_id)
-    if missing:  # If there are missing channels
-        msg = get_missing_channels_message(missing)
+def is_channel_member(user_id, channel_username):
+    """Check if user is a member of a specific channel"""
+    if user_id == ADMIN_ID:
+        return True
+    try:
+        member = bot.get_chat_member(channel_username, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except Exception as e:
+        print(f"Channel membership check error for {user_id} on {channel_username}: {e}")
+        return False
+
+def check_all_channels(user_id):
+    """Check if user is a member of all required channels. Returns (all_joined, missing_channels)"""
+    if user_id == ADMIN_ID:
+        return True, []
+    
+    missing = []
+    for channel in REQUIRED_CHANNELS:
+        if not is_channel_member(user_id, channel['username']):
+            missing.append(channel)
+    
+    return len(missing) == 0, missing
+
+def send_join_required(chat_id, missing_channels=None):
+    """Send message asking user to join required channels"""
+    if missing_channels is None:
+        all_joined, missing_channels = check_all_channels(chat_id)
+        if all_joined:
+            return True
+    
+    if missing_channels:
+        channel_list = "\n".join([f"• {ch['name']}: {ch['link']}" for ch in missing_channels])
+        
+        message = f"""
+🔒 *CHANNEL JOIN REQUIRED*
+━━━━━━━━━━━━━━━━━━
+
+Bot use karne ke liye pehle in channels ko join karo:
+
+{channel_list}
+
+⚠️ *Important:* Agar aapne pehle join kiya hai aur ab left kar diya hai, toh dubara join karo.
+
+Join karne ke baad `✅ I HAVE JOINED ALL` button dabao.
+
+━━━━━━━━━━━━━━━━━━
+📢 *Benefits of joining:*
+• Latest updates
+• Support access
+• Exclusive features
+• Community access
+"""
         bot.send_message(
             chat_id,
-            msg,
-            reply_markup=join_required_markup(),
+            message,
+            reply_markup=get_channel_join_markup_for_missing(missing_channels),
             parse_mode="Markdown",
             disable_web_page_preview=True
         )
-        return True
-    return False
+        return False
+    return True
 
 def cancel_button():
     markup = InlineKeyboardMarkup()
@@ -433,15 +434,15 @@ def cancel_button():
 def credit_packs_markup():
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("💰 40 Credits - ₹20", callback_data="plan_c40"),
-        InlineKeyboardButton("💰 120 Credits - ₹50", callback_data="plan_c120"),
-        InlineKeyboardButton("💰 400 Credits - ₹100", callback_data="plan_c400")
+        InlineKeyboardButton("💰 40 Credits - ₹40", callback_data="plan_c40"),
+        InlineKeyboardButton("💰 120 Credits - ₹120", callback_data="plan_c120"),
+        InlineKeyboardButton("💰 400 Credits - ₹400", callback_data="plan_c400")
     )
     markup.add(
-        InlineKeyboardButton("🚀 1 Hour Unlimited - ₹49", callback_data="plan_u1h"),
-        InlineKeyboardButton("🚀 1 Day Unlimited - ₹99", callback_data="plan_u1d"),
-        InlineKeyboardButton("🚀 7 Days Unlimited - ₹499", callback_data="plan_u1w"),
-        InlineKeyboardButton("🚀 30 Days Unlimited - ₹1499", callback_data="plan_u1m")
+        InlineKeyboardButton("🚀 1 Hour - ₹49", callback_data="plan_u1h"),
+        InlineKeyboardButton("🚀 1 Day - ₹99", callback_data="plan_u1d"),
+        InlineKeyboardButton("🚀 7 Days - ₹499", callback_data="plan_u1w"),
+        InlineKeyboardButton("🚀 30 Days - ₹1499", callback_data="plan_u1m")
     )
     markup.add(
         InlineKeyboardButton("🛡️ Number Protection - ₹99", callback_data="plan_protect_number"),
@@ -451,6 +452,7 @@ def credit_packs_markup():
     return markup
 
 def telegram_lookup_protection_markup():
+    """Show protection option after Telegram lookup"""
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton("🛡️ PROTECT MY TELEGRAM ID", callback_data="plan_protect_telegram"),
@@ -467,7 +469,6 @@ def remove_branding(text):
     for pattern in BRANDING_PATTERNS:
         result = re.sub(pattern, '', result, flags=re.IGNORECASE)
     result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
-    result = re.sub(r'@[a-zA-Z0-9_]+', '', result)
     result = result.strip()
     return result
 
@@ -478,216 +479,188 @@ def show_api_error(chat_id, message_id, lookup_type="api"):
     except Exception as edit_error:
         print(f"Failed to show generic API error for {lookup_type}: {edit_error}")
 
-def call_api_with_retry(url, params=None, max_retries=3, timeout=30):
-    """Generic API caller with retry logic"""
-    for attempt in range(max_retries):
+def call_generic_lookup_api(url):
+    """Generic API caller for all lookup types. Returns: (data, error_reason)"""
+    try:
+        print(f"[API CALL] {url}")
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/7.0",
+            "Accept": "application/json,text/html,text/plain,*/*",
+            "Connection": "close",
+        }
+        
+        response = requests.get(url, headers=headers, timeout=30)
+        print(f"[API CALL] Response Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            return None, f"http_{response.status_code}"
+        
+        content = response.text
+        if not content or len(content.strip()) < 5:
+            return None, "empty_response"
+        
+        # Try to parse as JSON first
         try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/7.0",
-                "Accept": "application/json,text/plain,*/*",
-                "Connection": "close",
-            }
+            data = response.json()
+            # Check if there's an error field
+            if isinstance(data, dict) and data.get('error'):
+                return {"error": data.get('error')}, None
+            return data, None
+        except:
+            # If not JSON, treat as HTML/text response
+            no_data_markers = [
+                "no data found", "not found", "no records", "no record",
+                "no result", "no results", "data not found", "record not found",
+                "invalid", "error"
+            ]
+            lower_content = content.lower()
+            if any(marker in lower_content for marker in no_data_markers):
+                return {"error": "no_result"}, None
             
-            response = requests.get(url, params=params, headers=headers, timeout=timeout)
-            
-            if response.status_code == 200:
-                try:
-                    return response.json(), None
-                except:
-                    return {"raw_response": response.text}, None
-            elif response.status_code in [429, 500, 502, 503, 504]:
-                time.sleep(2 * (attempt + 1))
-                continue
-            else:
-                return None, f"http_{response.status_code}"
-                
-        except requests.exceptions.Timeout:
-            if attempt == max_retries - 1:
-                return None, "timeout"
-            time.sleep(2)
-        except Exception as e:
-            if attempt == max_retries - 1:
-                return None, f"exception_{e}"
-            time.sleep(2)
-    
-    return None, "max_retries_exceeded"
+            cleaned_content = remove_branding(content)
+            return {"response": cleaned_content, "raw": content}, None
+        
+    except requests.exceptions.Timeout:
+        return None, "timeout"
+    except requests.exceptions.ConnectionError:
+        return None, "connection_error"
+    except Exception as e:
+        print(f"[API CALL] Exception: {e}")
+        return None, f"exception_{e}"
 
-def call_lookup_api(url, key_param, key_value, query_param, query_value):
-    """Generic lookup API caller"""
-    params = {
-        key_param: key_value,
-        query_param: query_value
-    }
-    return call_api_with_retry(url, params)
-
-def call_number_lookup_api(number):
-    """Call number lookup API"""
-    return call_lookup_api(
-        NUMBER_LOOKUP_API_URL,
-        "key", NUMBER_API_KEY,
-        "number", number
-    )
+def call_number_lookup_api(phone):
+    """Call the Number lookup API"""
+    try:
+        url = LOOKUP_API_URL.format(number=phone)
+        return call_generic_lookup_api(url)
+    except Exception as e:
+        print(f"[NUMBER LOOKUP API] Exception: {e}")
+        return None, f"exception_{e}"
 
 def call_telegram_lookup_api(username):
-    """Call Telegram lookup API"""
-    if not username.startswith('@'):
-        username = '@' + username
-    return call_lookup_api(
-        TELEGRAM_LOOKUP_API_URL,
-        "key", TELEGRAM_API_KEY,
-        "api", "gaurav_beniwal_0001"
-    )
+    """Call the Telegram lookup API"""
+    try:
+        if not username.startswith('@'):
+            username = '@' + username
+        url = TELEGRAM_LOOKUP_API_URL.format(username=username)
+        return call_generic_lookup_api(url)
+    except Exception as e:
+        print(f"[TELEGRAM LOOKUP API] Exception: {e}")
+        return None, f"exception_{e}"
 
-def call_pan_lookup_api(pan_number):
-    """Call PAN card lookup API"""
-    return call_lookup_api(
-        PAN_LOOKUP_API_URL,
-        "key", PAN_API_KEY,
-        "query", pan_number.upper()
-    )
+def call_pan_lookup_api(pan):
+    """Call the PAN Card lookup API"""
+    try:
+        url = PAN_LOOKUP_API_URL.format(pan=pan.upper())
+        return call_generic_lookup_api(url)
+    except Exception as e:
+        print(f"[PAN LOOKUP API] Exception: {e}")
+        return None, f"exception_{e}"
 
-def call_vehicle_owner_api(vehicle_number):
-    """Call vehicle to owner number API"""
-    return call_lookup_api(
-        VEHICLE_OWNER_API_URL,
-        "key", VEHICLE_OWNER_API_KEY,
-        "query", vehicle_number.upper()
-    )
+def call_vehicle_owner_api(vehicle):
+    """Call the Vehicle to Owner Number lookup API"""
+    try:
+        vehicle_clean = re.sub(r'[^A-Z0-9]', '', str(vehicle).upper())
+        url = VEHICLE_OWNER_API_URL.format(vehicle=vehicle_clean)
+        return call_generic_lookup_api(url)
+    except Exception as e:
+        print(f"[VEHICLE OWNER API] Exception: {e}")
+        return None, f"exception_{e}"
 
-def call_vehicle_lookup_api(vehicle_number):
-    """Call vehicle lookup API"""
-    return call_lookup_api(
-        VEHICLE_LOOKUP_API_URL,
-        "key", VEHICLE_API_KEY,
-        "query", vehicle_number.upper()
-    )
+def call_vehicle_lookup_api(vehicle):
+    """Call the Vehicle lookup API"""
+    try:
+        vehicle_clean = re.sub(r'[^A-Z0-9]', '', str(vehicle).upper())
+        url = VEHICLE_LOOKUP_API_URL.format(vehicle=vehicle_clean)
+        return call_generic_lookup_api(url)
+    except Exception as e:
+        print(f"[VEHICLE LOOKUP API] Exception: {e}")
+        return None, f"exception_{e}"
 
 def call_email_lookup_api(email):
-    """Call email lookup API"""
-    return call_lookup_api(
-        EMAIL_LOOKUP_API_URL,
-        "key", EMAIL_API_KEY,
-        "query", email.lower()
-    )
+    """Call the Email lookup API"""
+    try:
+        url = EMAIL_LOOKUP_API_URL.format(email=email)
+        return call_generic_lookup_api(url)
+    except Exception as e:
+        print(f"[EMAIL LOOKUP API] Exception: {e}")
+        return None, f"exception_{e}"
 
-def format_raw_response(data, indent=2):
-    """Format any raw response data into a pretty readable format"""
-    if data is None:
-        return "No data received"
-    
-    # If it's a string, try to parse as JSON first
-    if isinstance(data, str):
-        try:
-            data = json.loads(data)
-        except:
-            # If not JSON, return as is (but remove branding)
-            return remove_branding(data)
-    
-    # If it's a list, format each item
-    if isinstance(data, list):
-        if not data:
-            return "Empty list"
-        result = ""
-        for i, item in enumerate(data, 1):
-            if isinstance(item, dict):
-                result += f"\n📌 *Item {i}*:\n"
-                for key, value in item.items():
-                    if isinstance(value, (dict, list)):
-                        result += f"   • {key}: {json.dumps(value, indent=2)}\n"
-                    else:
-                        result += f"   • {key}: `{value}`\n"
-            else:
-                result += f"\n📌 *Item {i}*: `{item}`\n"
-        return result
-    
-    # If it's a dict, format all key-value pairs
-    if isinstance(data, dict):
-        # Remove any branding from the response
-        result = ""
-        
-        # Check for common response patterns
-        if "status" in data:
-            status = data.get("status", "N/A")
-            status_emoji = "✅" if str(status).lower() in ["success", "true", "1"] else "❌"
-            result += f"📊 *Status*: {status_emoji} `{status}`\n\n"
-        
-        if "message" in data:
-            result += f"💬 *Message*: {remove_branding(str(data['message']))}\n\n"
-        
-        # Process all other fields
-        for key, value in data.items():
-            if key in ["status", "message"]:
-                continue
-            if isinstance(value, dict):
-                result += f"\n📂 *{key.upper()}*:\n"
-                for k, v in value.items():
-                    if isinstance(v, (dict, list)):
-                        result += f"   • {k}: {json.dumps(v, indent=2)}\n"
-                    else:
-                        result += f"   • {k}: `{v}`\n"
-            elif isinstance(value, list):
-                result += f"\n📂 *{key.upper()}*:\n"
-                for item in value:
-                    if isinstance(item, dict):
-                        for k, v in item.items():
-                            if isinstance(v, (dict, list)):
-                                result += f"   • {k}: {json.dumps(v, indent=2)}\n"
-                            else:
-                                result += f"   • {k}: `{v}`\n"
-                    else:
-                        result += f"   • `{item}`\n"
-            else:
-                if value is not None and value != "":
-                    result += f"📌 {key}: `{remove_branding(str(value))}`\n"
-        
-        return result
-    
-    # Fallback for other types
-    return remove_branding(str(data))
+def call_identity_lookup_api(aadhar_number):
+    """Call the Identity (Aadhar) lookup API"""
+    try:
+        params = {'exploits': aadhar_number}
+        from urllib.parse import urlencode
+        url = f"https://exploitsindia.site//osint-api/aadhar.php?{urlencode(params)}"
+        return call_generic_lookup_api(url)
+    except Exception as e:
+        print(f"[IDENTITY LOOKUP API] Exception: {e}")
+        return None, f"exception_{e}"
 
-def format_lookup_response(result, query, lookup_type, user_id, cost, unlimited_active=False, unlimited_expiry=None):
-    """Format the final lookup response with pretty printed raw data"""
-    output = f"""
-🔍 *{lookup_type.upper()} LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def call_ifsc_lookup_api(ifsc_code):
+    """Call the IFSC lookup API"""
+    try:
+        params = {'exploits': ifsc_code.upper()}
+        from urllib.parse import urlencode
+        url = f"https://exploitsindia.site//osint-api/ifsc.php?{urlencode(params)}"
+        return call_generic_lookup_api(url)
+    except Exception as e:
+        print(f"[IFSC LOOKUP API] Exception: {e}")
+        return None, f"exception_{e}"
 
-📌 Query: `{query}`
+def parse_telegram_html_response(html_content):
+    """Parse HTML response from Telegram lookup API"""
+    result = {}
+    
+    tg_id_match = re.search(r'🆔 Telegram ID:\s*<code>(\d+)</code>', html_content)
+    if tg_id_match:
+        result['telegram_id'] = tg_id_match.group(1)
+    
+    phone_match = re.search(r'📱 Phone Number:\s*<code>(\d+)</code>', html_content)
+    if phone_match:
+        result['phone_number'] = phone_match.group(1)
+    
+    username_match = re.search(r'👥 Username:\s*@([a-zA-Z0-9_]+)', html_content)
+    if username_match:
+        result['username'] = '@' + username_match.group(1)
+    
+    country_match = re.search(r'🌍 Country:\s*([A-Za-z\s]+)', html_content)
+    if country_match:
+        result['country'] = country_match.group(1).strip()
+    
+    cc_match = re.search(r'📞 Country Code:\s*\+(\d+)', html_content)
+    if cc_match:
+        result['country_code'] = '+' + cc_match.group(1)
+    
+    return result
 
-"""
+def has_valid_number_results(result):
+    """True only when API/cache has at least one usable number result."""
+    if not isinstance(result, dict):
+        return False
     
-    # Format the raw response
-    if isinstance(result, dict):
-        # Check if there's a raw_response or just use the result directly
-        if "raw_response" in result:
-            formatted_data = format_raw_response(result["raw_response"])
-        else:
-            formatted_data = format_raw_response(result)
-    else:
-        formatted_data = format_raw_response(result)
+    # Check if it's a JSON response with results
+    if 'results' in result:
+        api_results = result.get('results')
+        if isinstance(api_results, dict):
+            return any(isinstance(v, dict) for v in api_results.values())
+        if isinstance(api_results, list):
+            return any(isinstance(v, dict) for v in api_results)
     
-    output += formatted_data
+    # Check for direct result fields
+    if any(str(k).lower().startswith("result") and isinstance(v, dict) for k, v in result.items()):
+        return True
     
-    output += f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    # Check for common fields
+    if 'name' in result and result['name']:
+        return True
+    if 'mobile' in result and result['mobile']:
+        return True
+    if 'phone' in result and result['phone']:
+        return True
     
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{cost}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
+    return False
 
 def split_long_text(text, limit=TELEGRAM_SAFE_LIMIT):
     """Split long Telegram text safely by lines to avoid the 4096 character limit."""
@@ -714,7 +687,7 @@ def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, pars
         markup = reply_markup if is_last else None
         try:
             if is_first:
-                sent_messages.append(bot.edit_message_text(chunk, chat_id, message_id, reply_markup=markup, parse_mode=parse_mode))
+                sent_messages.append(bot.edit_message_text(chunk, chat_id, message_id, reply_markup=markup, parse_mode=parse_mode, disable_web_page_preview=True))
             else:
                 sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, parse_mode=parse_mode, disable_web_page_preview=True))
         except Exception as send_error:
@@ -725,7 +698,71 @@ def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, pars
                 sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, disable_web_page_preview=True))
     return sent_messages
 
+def notify_admin_api_issue(lookup_type, query, error_reason):
+    """Send compact admin-only debug alert."""
+    try:
+        bot.send_message(
+            ADMIN_ID,
+            f"⚠️ *API TEMP ISSUE*\n\nType: `{lookup_type}`\nQuery: `{query}`\nReason: `{str(error_reason)[:500]}`\n\nUser credits were not deducted.",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Admin API issue notify failed: {e}")
+
+def is_active_session(user_id):
+    """Check if user has an active session"""
+    with active_sessions_lock:
+        return user_id in active_sessions
+
+def add_active_session(user_id):
+    """Add user to active sessions"""
+    with active_sessions_lock:
+        active_sessions.add(user_id)
+
+def remove_active_session(user_id):
+    """Remove user from active sessions"""
+    with active_sessions_lock:
+        active_sessions.discard(user_id)
+
 # ==================== TELEGRAM LOOKUP FUNCTIONS ====================
+def format_telegram_lookup_result(result, username, user_id, unlimited_active=False, unlimited_expiry=None):
+    """Format the Telegram lookup result for display - filtered to remove branding"""
+    output = f"""
+🔍 *TELEGRAM LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Lookup Result for: `{username}`
+────────────────────────
+
+👥 Username: `{result.get('username', username)}`
+🆔 Telegram ID: `{result.get('telegram_id', 'N/A')}`
+📱 Phone Number: `{result.get('phone_number', 'N/A')}`
+🌍 Country: `{result.get('country', 'N/A')}`
+📞 Country Code: `{result.get('country_code', 'N/A')}`
+
+────────────────────────
+"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+💎 *Credits Used:* `{TELEGRAM_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+{footer()}
+"""
+    return output
+
 def process_telegram_lookup(message):
     """Process Telegram username lookup"""
     user_id = message.from_user.id
@@ -733,6 +770,7 @@ def process_telegram_lookup(message):
 
     if username_input == "❌ CANCEL" or username_input == "/cancel":
         user_states.pop(user_id, None)
+        remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
@@ -748,20 +786,17 @@ def process_telegram_lookup(message):
     if not re.match(r'^@?[a-zA-Z0-9_]{5,32}$', username_input):
         bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `5 credits` per search", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
             bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
     
-    with active_sessions_lock:
-        if user_id in active_sessions:
-            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        active_sessions.add(user_id)
+    add_active_session(user_id)
     
     user = get_user(user_id)
     total_credits = get_total_credits(user_id)
@@ -770,38 +805,49 @@ def process_telegram_lookup(message):
     if total_credits < TELEGRAM_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* Telegram Lookup costs `{TELEGRAM_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Telegram...*", parse_mode='Markdown')
     
-    for anim in ["🔍", "🔎", "🔍"]:
-        time.sleep(0.8)
-        bot.edit_message_text(f"{anim} *Searching Telegram...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Telegram..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Telegram...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
     
-    result, error = call_telegram_lookup_api(username_input)
+    result, api_error_reason = call_telegram_lookup_api(username_input)
     
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="telegram")
-        notify_admin_api_issue("telegram_lookup", username_input, error)
+    if not result or result.get("error") == "no_result":
+        if result and result.get("error") == "no_result":
+            output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+🔍 Username: `{username_clean}`
+
+🚫 No records available in database
+
+💡 Tips:
+• Check username again
+• Try another username
+• Ensure username is correct
+
+💎 Credits NOT deducted
+{footer()}
+"""
+            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        else:
+            show_api_error(message.chat.id, loading_msg.message_id, lookup_type="telegram")
+            notify_admin_api_issue("telegram_lookup", username_input, api_error_reason)
+        
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
-    # Check if result has data
-    has_data = False
-    if isinstance(result, dict):
-        if "raw_response" in result and result["raw_response"]:
-            has_data = True
-        elif len(result) > 0:
-            has_data = True
-    elif result:
-        has_data = True
+    parsed_result = parse_telegram_html_response(result.get("response", ""))
     
-    if not has_data:
+    if not parsed_result.get('telegram_id') and not parsed_result.get('phone_number'):
         output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
@@ -820,38 +866,91 @@ def process_telegram_lookup(message):
 """
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
+        return
+    
+    telegram_id = parsed_result.get('telegram_id')
+    if telegram_id and is_telegram_protected(telegram_id):
+        output = f"""
+🛡️ *PROTECTED TELEGRAM ID*
+
+🔍 Username: `{username_clean}`
+🆔 Telegram ID: `{telegram_id}`
+
+This Telegram ID is protected by the Telegram Number Protection Plan.
+
+The owner has purchased privacy protection. Details are hidden.
+
+You can also protect your Telegram ID for ₹99!
+"""
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🛡️ PROTECT MY TELEGRAM", callback_data="plan_protect_telegram"))
+        markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
+        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, reply_markup=markup, parse_mode='Markdown')
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
+        remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, TELEGRAM_LOOKUP_COST):
             bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
                                 message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-            with active_sessions_lock:
-                active_sessions.discard(user_id)
+            remove_active_session(user_id)
             return
     
     increment_total_searches(user_id)
     
-    output = format_lookup_response(result, username_clean, "Telegram", user_id, TELEGRAM_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_telegram_lookup_result(parsed_result, username_clean, user_id, unlimited_active, unlimited_expiry)
     markup = telegram_lookup_protection_markup()
     
-    sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=True, lookup_type="telegram", credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0)
     
-    with active_sessions_lock:
-        active_sessions.discard(user_id)
+    remove_active_session(user_id)
 
-# ==================== PAN LOOKUP FUNCTION ====================
+# ==================== PAN CARD LOOKUP ====================
+def format_pan_lookup_result(response_text, pan, user_id, unlimited_active=False, unlimited_expiry=None):
+    """Format the PAN Card lookup result"""
+    output = f"""
+📋 *PAN CARD LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PAN Card: `{pan.upper()}`
+
+{response_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+💎 *Credits Used:* `{PAN_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+{footer()}
+"""
+    return output
+
 def process_pan_lookup(message):
-    """Process PAN card lookup"""
+    """Process PAN Card lookup"""
     user_id = message.from_user.id
     pan_input = str(message.text or "").strip().upper()
 
     if pan_input == "❌ CANCEL" or pan_input == "/cancel":
         user_states.pop(user_id, None)
+        remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
@@ -861,22 +960,19 @@ def process_pan_lookup(message):
     user_states.pop(user_id, None)
 
     if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan_input):
-        bot.reply_to(message, "❌ *Invalid PAN Card Number!*\n\nEnter a valid 10-character PAN number.\nExample: `NTEPK1628C`\n\n💎 Cost: `5 credits` per search", 
+        bot.reply_to(message, "❌ *Invalid PAN Card Number!*\n\nEnter a valid 10-character PAN card number.\nExample: `ABCDE1234F`\n\n💎 Cost: `5 credits` per search", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
             bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
     
-    with active_sessions_lock:
-        if user_id in active_sessions:
-            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        active_sessions.add(user_id)
+    add_active_session(user_id)
     
     user = get_user(user_id)
     total_credits = get_total_credits(user_id)
@@ -885,42 +981,26 @@ def process_pan_lookup(message):
     if total_credits < PAN_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* PAN Card Lookup costs `{PAN_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching PAN Card records...*", parse_mode='Markdown')
     
-    for anim in ["🔍", "🔎", "🔍"]:
-        time.sleep(0.8)
-        bot.edit_message_text(f"{anim} *Searching PAN Card records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching PAN Card records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching PAN Card records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
     
-    result, error = call_pan_lookup_api(pan_input)
+    result, api_error_reason = call_pan_lookup_api(pan_input)
     
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="pan")
-        notify_admin_api_issue("pan_lookup", pan_input, error)
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, pan_input, found=False, lookup_type="pan", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
-        return
-    
-    has_data = False
-    if isinstance(result, dict):
-        if "raw_response" in result and result["raw_response"]:
-            has_data = True
-        elif len(result) > 0:
-            has_data = True
-    elif result:
-        has_data = True
-    
-    if not has_data:
-        output = f"""
+    if not result or result.get("error") == "no_result":
+        if result and result.get("error") == "no_result":
+            output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
 
-🪪 PAN Card: `{pan_input}`
+📋 PAN: `{pan_input}`
 
 🚫 No records available in database
 
@@ -931,45 +1011,285 @@ def process_pan_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
+            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        else:
+            show_api_error(message.chat.id, loading_msg.message_id, lookup_type="pan")
+            notify_admin_api_issue("pan_lookup", pan_input, api_error_reason)
+        
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, pan_input, found=False, lookup_type="pan", credits_used=0)
+        remove_active_session(user_id)
+        return
+    
+    # Extract response text
+    response_text = ""
+    if isinstance(result, dict):
+        if 'response' in result:
+            response_text = result['response']
+        elif 'result' in result:
+            response_text = json.dumps(result['result'], indent=2)
+        else:
+            # Try to pretty print the JSON
+            try:
+                response_text = json.dumps(result, indent=2)
+            except:
+                response_text = str(result)
+    else:
+        response_text = str(result)
+    
+    # Check for no data markers in the response
+    no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
+    if any(marker in response_text.lower() for marker in no_data_markers):
+        output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+📋 PAN: `{pan_input}`
+
+🚫 No records available in database
+
+💎 Credits NOT deducted
+{footer()}
+"""
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, pan_input, found=False, lookup_type="pan", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, PAN_LOOKUP_COST):
             bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
                                 message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-            with active_sessions_lock:
-                active_sessions.discard(user_id)
+            remove_active_session(user_id)
             return
     
     increment_total_searches(user_id)
     
-    output = format_lookup_response(result, pan_input, "PAN Card", user_id, PAN_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_pan_lookup_result(response_text, pan_input, user_id, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("🔍 NEW PAN LOOKUP", callback_data="pan_lookup"),
+        InlineKeyboardButton("🔍 NEW PAN SEARCH", callback_data="pan_lookup"),
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, pan_input, found=True, lookup_type="pan", credits_used=PAN_LOOKUP_COST if not unlimited_active else 0)
     
-    with active_sessions_lock:
-        active_sessions.discard(user_id)
+    remove_active_session(user_id)
 
-# ==================== VEHICLE LOOKUP FUNCTIONS ====================
-def process_vehicle_lookup(message):
-    """Process vehicle lookup"""
+# ==================== VEHICLE OWNER LOOKUP ====================
+def format_vehicle_owner_result(response_text, vehicle, user_id, unlimited_active=False, unlimited_expiry=None):
+    """Format the Vehicle to Owner Number lookup result"""
+    output = f"""
+📱 *VEHICLE TO OWNER RESULT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Vehicle Number: `{vehicle.upper()}`
+
+{response_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+💎 *Credits Used:* `{VEHICLE_OWNER_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+{footer()}
+"""
+    return output
+
+def process_vehicle_owner_lookup(message):
+    """Process Vehicle to Owner Number lookup"""
     user_id = message.from_user.id
     vehicle_input = str(message.text or "").strip().upper()
 
     if vehicle_input == "❌ CANCEL" or vehicle_input == "/cancel":
         user_states.pop(user_id, None)
+        remove_active_session(user_id)
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        return
+
+    if user_states.get(user_id) != "awaiting_vehicle_owner_input":
+        return
+
+    user_states.pop(user_id, None)
+
+    # Clean vehicle number
+    vehicle_clean = re.sub(r'[^A-Z0-9]', '', vehicle_input)
+    if len(vehicle_clean) < 4:
+        bot.reply_to(message, "❌ *Invalid Vehicle Number!*\n\nEnter a valid vehicle number.\nExample: `BR07PB6268`\n\n💎 Cost: `10 credits` per search", 
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
+        return
+    
+    if user_id in user_cooldown:
+        if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
+            wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
+            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
+            return
+    
+    add_active_session(user_id)
+    
+    user = get_user(user_id)
+    total_credits = get_total_credits(user_id)
+    unlimited_active, unlimited_expiry = get_active_unlimited(user)
+    
+    if total_credits < VEHICLE_OWNER_COST and not unlimited_active:
+        bot.reply_to(message, f"❌ *Not enough credits!* Vehicle to Owner lookup costs `{VEHICLE_OWNER_COST}` credits. Buy more credits or get an unlimited plan.", 
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
+        return
+    
+    user_cooldown[user_id] = time.time()
+    loading_msg = bot.reply_to(message, "🔍 *Searching Vehicle Owner records...*", parse_mode='Markdown')
+    
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Vehicle Owner records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Vehicle Owner records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    
+    result, api_error_reason = call_vehicle_owner_api(vehicle_input)
+    
+    if not result or result.get("error") == "no_result":
+        if result and result.get("error") == "no_result":
+            output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+🚗 Vehicle: `{vehicle_input}`
+
+🚫 No records available in database
+
+💡 Tips:
+• Check vehicle number again
+• Try another vehicle number
+
+💎 Credits NOT deducted
+{footer()}
+"""
+            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        else:
+            show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle_owner")
+            notify_admin_api_issue("vehicle_owner_lookup", vehicle_input, api_error_reason)
+        
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle_owner", credits_used=0)
+        remove_active_session(user_id)
+        return
+    
+    # Extract response text
+    response_text = ""
+    if isinstance(result, dict):
+        if 'response' in result:
+            response_text = result['response']
+        elif 'result' in result:
+            response_text = json.dumps(result['result'], indent=2)
+        else:
+            try:
+                response_text = json.dumps(result, indent=2)
+            except:
+                response_text = str(result)
+    else:
+        response_text = str(result)
+    
+    # Check for no data markers
+    no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
+    if any(marker in response_text.lower() for marker in no_data_markers):
+        output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+🚗 Vehicle: `{vehicle_input}`
+
+🚫 No records available in database
+
+💎 Credits NOT deducted
+{footer()}
+"""
+        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle_owner", credits_used=0)
+        remove_active_session(user_id)
+        return
+    
+    if not unlimited_active:
+        if not deduct_credits(user_id, VEHICLE_OWNER_COST):
+            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
+                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            remove_active_session(user_id)
+            return
+    
+    increment_total_searches(user_id)
+    
+    output = format_vehicle_owner_result(response_text, vehicle_input, user_id, unlimited_active, unlimited_expiry)
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("🔍 NEW VEHICLE SEARCH", callback_data="vehicle_owner_lookup"),
+        InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
+    )
+    
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    
+    record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=True, lookup_type="vehicle_owner", credits_used=VEHICLE_OWNER_COST if not unlimited_active else 0)
+    
+    remove_active_session(user_id)
+
+# ==================== VEHICLE LOOKUP ====================
+def format_vehicle_lookup_result(response_text, vehicle, user_id, unlimited_active=False, unlimited_expiry=None):
+    """Format the Vehicle lookup result"""
+    output = f"""
+🚗 *VEHICLE LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Vehicle Number: `{vehicle.upper()}`
+
+{response_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+💎 *Credits Used:* `{VEHICLE_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+{footer()}
+"""
+    return output
+
+def process_vehicle_lookup(message):
+    """Process Vehicle lookup"""
+    user_id = message.from_user.id
+    vehicle_input = str(message.text or "").strip().upper()
+
+    if vehicle_input == "❌ CANCEL" or vehicle_input == "/cancel":
+        user_states.pop(user_id, None)
+        remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
@@ -978,24 +1298,22 @@ def process_vehicle_lookup(message):
 
     user_states.pop(user_id, None)
 
+    # Clean vehicle number
     vehicle_clean = re.sub(r'[^A-Z0-9]', '', vehicle_input)
     if len(vehicle_clean) < 4:
-        bot.reply_to(message, "❌ *Invalid Vehicle Number!*\n\nEnter a valid vehicle registration number.\nExample: `BR07PB6268`\n\n💎 Cost: `5 credits` per search", 
+        bot.reply_to(message, "❌ *Invalid Vehicle Number!*\n\nEnter a valid vehicle number.\nExample: `BR07PB6268`\n\n💎 Cost: `5 credits` per search", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
             bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
     
-    with active_sessions_lock:
-        if user_id in active_sessions:
-            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        active_sessions.add(user_id)
+    add_active_session(user_id)
     
     user = get_user(user_id)
     total_credits = get_total_credits(user_id)
@@ -1004,37 +1322,63 @@ def process_vehicle_lookup(message):
     if total_credits < VEHICLE_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* Vehicle Lookup costs `{VEHICLE_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Vehicle records...*", parse_mode='Markdown')
     
-    for anim in ["🔍", "🔎", "🔍"]:
-        time.sleep(0.8)
-        bot.edit_message_text(f"{anim} *Searching Vehicle records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Vehicle records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Vehicle records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
     
-    result, error = call_vehicle_lookup_api(vehicle_input)
+    result, api_error_reason = call_vehicle_lookup_api(vehicle_input)
     
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle")
-        notify_admin_api_issue("vehicle_lookup", vehicle_input, error)
+    if not result or result.get("error") == "no_result":
+        if result and result.get("error") == "no_result":
+            output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+🚗 Vehicle: `{vehicle_input}`
+
+🚫 No records available in database
+
+💡 Tips:
+• Check vehicle number again
+• Try another vehicle number
+
+💎 Credits NOT deducted
+{footer()}
+"""
+            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        else:
+            show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle")
+            notify_admin_api_issue("vehicle_lookup", vehicle_input, api_error_reason)
+        
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
-    has_data = False
+    # Extract response text
+    response_text = ""
     if isinstance(result, dict):
-        if "raw_response" in result and result["raw_response"]:
-            has_data = True
-        elif len(result) > 0:
-            has_data = True
-    elif result:
-        has_data = True
+        if 'response' in result:
+            response_text = result['response']
+        elif 'result' in result:
+            response_text = json.dumps(result['result'], indent=2)
+        else:
+            try:
+                response_text = json.dumps(result, indent=2)
+            except:
+                response_text = str(result)
+    else:
+        response_text = str(result)
     
-    if not has_data:
+    # Check for no data markers
+    no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
+    if any(marker in response_text.lower() for marker in no_data_markers):
         output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
@@ -1048,157 +1392,74 @@ def process_vehicle_lookup(message):
 """
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, VEHICLE_LOOKUP_COST):
             bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
                                 message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-            with active_sessions_lock:
-                active_sessions.discard(user_id)
+            remove_active_session(user_id)
             return
     
     increment_total_searches(user_id)
     
-    output = format_lookup_response(result, vehicle_input, "Vehicle", user_id, VEHICLE_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_vehicle_lookup_result(response_text, vehicle_input, user_id, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("🔍 NEW VEHICLE LOOKUP", callback_data="vehicle_lookup"),
+        InlineKeyboardButton("🔍 NEW VEHICLE SEARCH", callback_data="vehicle_lookup"),
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=True, lookup_type="vehicle", credits_used=VEHICLE_LOOKUP_COST if not unlimited_active else 0)
     
-    with active_sessions_lock:
-        active_sessions.discard(user_id)
+    remove_active_session(user_id)
 
-def process_vehicle_owner_lookup(message):
-    """Process vehicle to owner number lookup"""
-    user_id = message.from_user.id
-    vehicle_input = str(message.text or "").strip().upper()
+# ==================== EMAIL LOOKUP ====================
+def format_email_lookup_result(response_text, email, user_id, unlimited_active=False, unlimited_expiry=None):
+    """Format the Email lookup result"""
+    output = f"""
+📧 *EMAIL LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    if vehicle_input == "❌ CANCEL" or vehicle_input == "/cancel":
-        user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        return
+Email: `{email}`
 
-    if user_states.get(user_id) != "awaiting_vehicle_owner_input":
-        return
+{response_text}
 
-    user_states.pop(user_id, None)
-
-    vehicle_clean = re.sub(r'[^A-Z0-9]', '', vehicle_input)
-    if len(vehicle_clean) < 4:
-        bot.reply_to(message, "❌ *Invalid Vehicle Number!*\n\nEnter a valid vehicle registration number.\nExample: `BR07PB6268`\n\n💎 Cost: `10 credits` per search", 
-                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        return
-    
-    if user_id in user_cooldown:
-        if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
-            wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-    
-    with active_sessions_lock:
-        if user_id in active_sessions:
-            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        active_sessions.add(user_id)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
     
     user = get_user(user_id)
-    total_credits = get_total_credits(user_id)
-    unlimited_active, unlimited_expiry = get_active_unlimited(user)
+    updated_total = get_total_credits(user_id)
     
-    if total_credits < VEHICLE_OWNER_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Vehicle Owner Lookup costs `{VEHICLE_OWNER_COST}` credits. Buy more credits or get an unlimited plan.", 
-                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
-        return
+    if unlimited_active:
+        output += f"""
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+💎 *Credits Used:* `{EMAIL_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
     
-    user_cooldown[user_id] = time.time()
-    loading_msg = bot.reply_to(message, "🔍 *Searching Vehicle Owner records...*", parse_mode='Markdown')
-    
-    for anim in ["🔍", "🔎", "🔍"]:
-        time.sleep(0.8)
-        bot.edit_message_text(f"{anim} *Searching Vehicle Owner records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    
-    result, error = call_vehicle_owner_api(vehicle_input)
-    
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle_owner")
-        notify_admin_api_issue("vehicle_owner_lookup", vehicle_input, error)
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle_owner", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
-        return
-    
-    has_data = False
-    if isinstance(result, dict):
-        if "raw_response" in result and result["raw_response"]:
-            has_data = True
-        elif len(result) > 0:
-            has_data = True
-    elif result:
-        has_data = True
-    
-    if not has_data:
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🔍 Vehicle: `{vehicle_input}`
-
-🚫 No records available in database
-
-💎 Credits NOT deducted
+    output += f"""
 {footer()}
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle_owner", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
-        return
-    
-    if not unlimited_active:
-        if not deduct_credits(user_id, VEHICLE_OWNER_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
-                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-            with active_sessions_lock:
-                active_sessions.discard(user_id)
-            return
-    
-    increment_total_searches(user_id)
-    
-    output = format_lookup_response(result, vehicle_input, "Vehicle Owner", user_id, VEHICLE_OWNER_COST, unlimited_active, unlimited_expiry)
-    
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("🔍 NEW VEHICLE OWNER LOOKUP", callback_data="vehicle_owner_lookup"),
-        InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
-    )
-    
-    sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
-    
-    record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=True, lookup_type="vehicle_owner", credits_used=VEHICLE_OWNER_COST if not unlimited_active else 0)
-    
-    with active_sessions_lock:
-        active_sessions.discard(user_id)
+    return output
 
-# ==================== EMAIL LOOKUP FUNCTION ====================
 def process_email_lookup(message):
-    """Process email lookup"""
+    """Process Email lookup"""
     user_id = message.from_user.id
     email_input = str(message.text or "").strip().lower()
 
     if email_input == "❌ CANCEL" or email_input == "/cancel":
         user_states.pop(user_id, None)
+        remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
@@ -1207,23 +1468,22 @@ def process_email_lookup(message):
 
     user_states.pop(user_id, None)
 
-    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email_input):
+    # Simple email validation
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, email_input):
         bot.reply_to(message, "❌ *Invalid Email Address!*\n\nEnter a valid email address.\nExample: `user@example.com`\n\n💎 Cost: `20 credits` per search", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
             bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
     
-    with active_sessions_lock:
-        if user_id in active_sessions:
-            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        active_sessions.add(user_id)
+    add_active_session(user_id)
     
     user = get_user(user_id)
     total_credits = get_total_credits(user_id)
@@ -1232,38 +1492,22 @@ def process_email_lookup(message):
     if total_credits < EMAIL_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* Email Lookup costs `{EMAIL_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Email records...*", parse_mode='Markdown')
     
-    for anim in ["🔍", "🔎", "🔍"]:
-        time.sleep(0.8)
-        bot.edit_message_text(f"{anim} *Searching Email records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Email records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Email records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
     
-    result, error = call_email_lookup_api(email_input)
+    result, api_error_reason = call_email_lookup_api(email_input)
     
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="email")
-        notify_admin_api_issue("email_lookup", email_input, error)
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, email_input, found=False, lookup_type="email", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
-        return
-    
-    has_data = False
-    if isinstance(result, dict):
-        if "raw_response" in result and result["raw_response"]:
-            has_data = True
-        elif len(result) > 0:
-            has_data = True
-    elif result:
-        has_data = True
-    
-    if not has_data:
-        output = f"""
+    if not result or result.get("error") == "no_result":
+        if result and result.get("error") == "no_result":
+            output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
 
@@ -1278,38 +1522,106 @@ def process_email_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
+            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        else:
+            show_api_error(message.chat.id, loading_msg.message_id, lookup_type="email")
+            notify_admin_api_issue("email_lookup", email_input, api_error_reason)
+        
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, email_input, found=False, lookup_type="email", credits_used=0)
+        remove_active_session(user_id)
+        return
+    
+    # Extract response text
+    response_text = ""
+    if isinstance(result, dict):
+        if 'response' in result:
+            response_text = result['response']
+        elif 'result' in result:
+            response_text = json.dumps(result['result'], indent=2)
+        else:
+            try:
+                response_text = json.dumps(result, indent=2)
+            except:
+                response_text = str(result)
+    else:
+        response_text = str(result)
+    
+    # Check for no data markers
+    no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
+    if any(marker in response_text.lower() for marker in no_data_markers):
+        output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+📧 Email: `{email_input}`
+
+🚫 No records available in database
+
+💎 Credits NOT deducted
+{footer()}
+"""
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, email_input, found=False, lookup_type="email", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, EMAIL_LOOKUP_COST):
             bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
                                 message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-            with active_sessions_lock:
-                active_sessions.discard(user_id)
+            remove_active_session(user_id)
             return
     
     increment_total_searches(user_id)
     
-    output = format_lookup_response(result, email_input, "Email", user_id, EMAIL_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_email_lookup_result(response_text, email_input, user_id, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("🔍 NEW EMAIL LOOKUP", callback_data="email_lookup"),
+        InlineKeyboardButton("🔍 NEW EMAIL SEARCH", callback_data="email_lookup"),
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, email_input, found=True, lookup_type="email", credits_used=EMAIL_LOOKUP_COST if not unlimited_active else 0)
     
-    with active_sessions_lock:
-        active_sessions.discard(user_id)
+    remove_active_session(user_id)
 
-# ==================== IDENTITY LOOKUP FUNCTION ====================
+# ==================== IDENTITY LOOKUP ====================
+def format_identity_lookup_result(response_text, query, user_id, unlimited_active=False, unlimited_expiry=None):
+    """Format the Identity lookup result"""
+    output = f"""
+🆔 *IDENTITY LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Query: `{query}`
+
+{response_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+💎 *Credits Used:* `{IDENTITY_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+{footer()}
+"""
+    return output
+
 def process_identity_lookup(message):
     """Process Identity (Aadhar) lookup"""
     user_id = message.from_user.id
@@ -1317,6 +1629,7 @@ def process_identity_lookup(message):
 
     if aadhar_input == "❌ CANCEL" or aadhar_input == "/cancel":
         user_states.pop(user_id, None)
+        remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
@@ -1328,20 +1641,17 @@ def process_identity_lookup(message):
     if not re.match(r'^\d{12}$', aadhar_input):
         bot.reply_to(message, "❌ *Invalid Aadhar Number!*\n\nEnter a valid 12-digit Aadhar number.\nExample: `123456789012`\n\n💎 Cost: `5 credits` per search", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
             bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
     
-    with active_sessions_lock:
-        if user_id in active_sessions:
-            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        active_sessions.add(user_id)
+    add_active_session(user_id)
     
     user = get_user(user_id)
     total_credits = get_total_credits(user_id)
@@ -1350,29 +1660,46 @@ def process_identity_lookup(message):
     if total_credits < IDENTITY_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* Identity Lookup costs `{IDENTITY_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Identity records...*", parse_mode='Markdown')
     
-    for anim in ["🔍", "🔎", "🔍"]:
-        time.sleep(0.8)
-        bot.edit_message_text(f"{anim} *Searching Identity records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Identity records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching Identity records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
     
-    # Identity lookup using existing API
-    result, error = call_api_with_retry("https://exploitsindia.site//osint-api/aadhar.php", {"exploits": aadhar_input})
+    result, api_error_reason = call_identity_lookup_api(aadhar_input)
     
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="identity")
-        notify_admin_api_issue("identity_lookup", aadhar_input, error)
+    if not result or result.get("error") == "no_result":
+        if result and result.get("error") == "no_result":
+            output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+🆔 Aadhar: `{aadhar_input}`
+
+🚫 No records available in database
+
+💡 Tips:
+• Check number again
+• Try another Aadhar number
+
+💎 Credits NOT deducted
+{footer()}
+"""
+            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        else:
+            show_api_error(message.chat.id, loading_msg.message_id, lookup_type="identity")
+            notify_admin_api_issue("identity_lookup", aadhar_input, api_error_reason)
+        
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, aadhar_input, found=False, lookup_type="identity", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
-    response_text = result.get("response", "") if isinstance(result, dict) else str(result)
+    response_text = result.get("response", "")
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid"]
     if any(marker in response_text.lower() for marker in no_data_markers):
         output = f"""
@@ -1388,21 +1715,19 @@ def process_identity_lookup(message):
 """
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, aadhar_input, found=False, lookup_type="identity", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, IDENTITY_LOOKUP_COST):
             bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
                                 message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-            with active_sessions_lock:
-                active_sessions.discard(user_id)
+            remove_active_session(user_id)
             return
     
     increment_total_searches(user_id)
     
-    output = format_lookup_response({"raw_response": response_text}, aadhar_input, "Identity", user_id, IDENTITY_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_identity_lookup_result(response_text, aadhar_input, user_id, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1410,14 +1735,46 @@ def process_identity_lookup(message):
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, aadhar_input, found=True, lookup_type="identity", credits_used=IDENTITY_LOOKUP_COST if not unlimited_active else 0)
     
-    with active_sessions_lock:
-        active_sessions.discard(user_id)
+    remove_active_session(user_id)
 
-# ==================== IFSC LOOKUP FUNCTION ====================
+# ==================== IFSC LOOKUP ====================
+def format_ifsc_lookup_result(response_text, query, user_id, unlimited_active=False, unlimited_expiry=None):
+    """Format the IFSC lookup result"""
+    output = f"""
+🏦 *IFSC LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+IFSC Code: `{query.upper()}`
+
+{response_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+💎 *Credits Used:* `{IFSC_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+{footer()}
+"""
+    return output
+
 def process_ifsc_lookup(message):
     """Process IFSC lookup"""
     user_id = message.from_user.id
@@ -1425,6 +1782,7 @@ def process_ifsc_lookup(message):
 
     if ifsc_input == "❌ CANCEL" or ifsc_input == "/cancel":
         user_states.pop(user_id, None)
+        remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
@@ -1436,20 +1794,17 @@ def process_ifsc_lookup(message):
     if not re.match(r'^[A-Z]{4}0[A-Z0-9]{6}$', ifsc_input):
         bot.reply_to(message, "❌ *Invalid IFSC Code!*\n\nEnter a valid IFSC code.\nExample: `HDFC0001325`\n\n💎 Cost: `3 credits` per search", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
         return
     
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
             bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
     
-    with active_sessions_lock:
-        if user_id in active_sessions:
-            bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", 
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        active_sessions.add(user_id)
+    add_active_session(user_id)
     
     user = get_user(user_id)
     total_credits = get_total_credits(user_id)
@@ -1458,29 +1813,46 @@ def process_ifsc_lookup(message):
     if total_credits < IFSC_LOOKUP_COST and not unlimited_active:
         bot.reply_to(message, f"❌ *Not enough credits!* IFSC Lookup costs `{IFSC_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching IFSC records...*", parse_mode='Markdown')
     
-    for anim in ["🔍", "🔎", "🔍"]:
-        time.sleep(0.8)
-        bot.edit_message_text(f"{anim} *Searching IFSC records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching IFSC records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching IFSC records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
     
-    # IFSC lookup using existing API
-    result, error = call_api_with_retry("https://exploitsindia.site//osint-api/ifsc.php", {"exploits": ifsc_input})
+    result, api_error_reason = call_ifsc_lookup_api(ifsc_input)
     
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="ifsc")
-        notify_admin_api_issue("ifsc_lookup", ifsc_input, error)
+    if not result or result.get("error") == "no_result":
+        if result and result.get("error") == "no_result":
+            output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+🏦 IFSC Code: `{ifsc_input}`
+
+🚫 No records available in database
+
+💡 Tips:
+• Check IFSC code again
+• Try another IFSC code
+
+💎 Credits NOT deducted
+{footer()}
+"""
+            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        else:
+            show_api_error(message.chat.id, loading_msg.message_id, lookup_type="ifsc")
+            notify_admin_api_issue("ifsc_lookup", ifsc_input, api_error_reason)
+        
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, ifsc_input, found=False, lookup_type="ifsc", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
-    response_text = result.get("response", "") if isinstance(result, dict) else str(result)
+    response_text = result.get("response", "")
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "not available"]
     if any(marker in response_text.lower() for marker in no_data_markers):
         output = f"""
@@ -1496,21 +1868,19 @@ def process_ifsc_lookup(message):
 """
         bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, ifsc_input, found=False, lookup_type="ifsc", credits_used=0)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, IFSC_LOOKUP_COST):
             bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
                                 message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-            with active_sessions_lock:
-                active_sessions.discard(user_id)
+            remove_active_session(user_id)
             return
     
     increment_total_searches(user_id)
     
-    output = format_lookup_response({"raw_response": response_text}, ifsc_input, "IFSC", user_id, IFSC_LOOKUP_COST, unlimited_active, unlimited_expiry)
+    output = format_ifsc_lookup_result(response_text, ifsc_input, user_id, unlimited_active, unlimited_expiry)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1518,12 +1888,292 @@ def process_ifsc_lookup(message):
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, ifsc_input, found=True, lookup_type="ifsc", credits_used=IFSC_LOOKUP_COST if not unlimited_active else 0)
     
-    with active_sessions_lock:
-        active_sessions.discard(user_id)
+    remove_active_session(user_id)
+
+# ==================== NUMBER LOOKUP ====================
+def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
+    """Format API/cache result."""
+    if not isinstance(result, dict):
+        result = {}
+
+    parsed_results = []
+
+    api_results = result.get('results')
+    if isinstance(api_results, dict):
+        def sort_key(item):
+            key = str(item[0])
+            m = re.search(r'\d+', key)
+            return int(m.group()) if m else 9999
+        for key, value in sorted(api_results.items(), key=sort_key):
+            if isinstance(value, dict):
+                parsed_results.append(value)
+            elif isinstance(value, list):
+                parsed_results.extend([v for v in value if isinstance(v, dict)])
+    elif isinstance(api_results, list):
+        parsed_results = [v for v in api_results if isinstance(v, dict)]
+
+    if not parsed_results:
+        direct_result_items = [(k, v) for k, v in result.items() if str(k).lower().startswith('result') and isinstance(v, dict)]
+        def sort_key2(item):
+            m = re.search(r'\d+', str(item[0]))
+            return int(m.group()) if m else 9999
+        for key, value in sorted(direct_result_items, key=sort_key2):
+            parsed_results.append(value)
+
+    if not parsed_results and ('name' in result or 'mobile' in result):
+        parsed_results = [result]
+
+    total_results_found = len(parsed_results)
+    parsed_results = parsed_results[:MAX_LOOKUP_RESULTS]
+    showing_text = f"\n📌 Showing: `{len(parsed_results)}` / `{total_results_found}`" if total_results_found > MAX_LOOKUP_RESULTS else ""
+    
+    output = f"""
+🔍 *NUMBER LOOKUP RESULT*
+━━━━━━━━━━━━━━━━━━
+
+📊 Total Results Found: `{total_results_found}`{showing_text}
+"""
+    
+    first_name = "Unknown"
+    
+    for idx, data in enumerate(parsed_results, 1):
+        name = data.get('name') or data.get('Name') or data.get('full_name') or 'N/A'
+        if idx == 1 and name != 'N/A':
+            first_name = name
+            
+        alt_mobile = data.get('alt_mobile') or data.get('alternate_mobile') or data.get('Alt_Mobile') or 'N/A'
+        if alt_mobile == 'NA' or alt_mobile == 'n/a':
+            alt_mobile = 'N/A'
+        
+        father_name = data.get('father_name') or data.get('Father_Name') or data.get('father') or 'N/A'
+        email = data.get('email') or data.get('Email') or 'N/A'
+        if email == 'n/a':
+            email = 'N/A'
+            
+        aadhar = data.get('aadhar_number') or data.get('aadhar') or data.get('Aadhar') or 'N/A'
+        if aadhar == 'n/a':
+            aadhar = 'N/A'
+            
+        operator = data.get('operator') or data.get('Operator') or data.get('carrier') or 'N/A'
+        circle = data.get('state_circle') or data.get('circle') or data.get('Circle') or data.get('state') or 'N/A'
+        address = data.get('address') or data.get('Address') or data.get('full_address') or 'N/A'
+        if address == 'NA':
+            address = 'N/A'
+        
+        mobile = data.get('mobile') or data.get('Mobile') or data.get('phone') or phone
+        
+        output += f"""
+
+━━━━━━━━━━━━━━━━━━
+📄 *RESULT {idx}*
+
+📱 Mobile: `{mobile}`
+📞 Alternate: `{alt_mobile}`
+👤 Name: `{name}`
+👨 Father: `{father_name}`
+📧 Email: `{email}`
+🪪 Aadhaar: `{aadhar}`
+📡 Operator: `{operator}`
+📍 Circle: `{circle}`
+🏠 Address: `{address}`"""
+    
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
+    
+    if unlimited_active:
+        output += f"""
+
+━━━━━━━━━━━━━━━━━━
+🚀 *UNLIMITED PLAN ACTIVE*
+No credits deducted!
+Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+"""
+    else:
+        output += f"""
+
+━━━━━━━━━━━━━━━━━━
+💎 *Credits Used:* `{NUMBER_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
+    
+    output += f"""
+{footer()}
+"""
+    
+    return output, first_name
+
+def process_lookup(message):
+    """Process number lookup"""
+    user_id = message.from_user.id
+    raw_phone = str(message.text or "").strip()
+
+    if raw_phone == "❌ CANCEL" or raw_phone == "/cancel":
+        user_states.pop(user_id, None)
+        remove_active_session(user_id)
+        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        return
+
+    if user_states.get(user_id) != "awaiting_number":
+        return
+
+    user_states.pop(user_id, None)
+    phone = normalize_indian_mobile(raw_phone)
+
+    if not phone:
+        bot.reply_to(message, "❌ *Invalid number!*\n\nEnter Indian mobile number.\nExamples: `9876543210` or `+919876543210`", 
+                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
+        return
+
+    if is_active_session(user_id):
+        bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
+        return
+    
+    if user_id in user_cooldown:
+        if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
+            wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
+            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
+            return
+    
+    add_active_session(user_id)
+    
+    user = get_user(user_id)
+    total_credits = get_total_credits(user_id)
+    unlimited_active, unlimited_expiry = get_active_unlimited(user)
+    
+    if total_credits < NUMBER_LOOKUP_COST and not unlimited_active:
+        bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
+        return
+    
+    if is_number_protected(phone):
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🛡️ PROTECT MY NUMBER", callback_data="protect"))
+        markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
+        bot.reply_to(message, f"""
+🛡️ *PROTECTED NUMBER*
+
+📱 `{phone}`
+
+This number is protected by the Number Protection Plan.
+
+The owner has purchased privacy protection. Details are hidden.
+
+You can also protect your number for ₹99!
+""", reply_markup=markup, parse_mode='Markdown')
+        remove_active_session(user_id)
+        return
+    
+    user_cooldown[user_id] = time.time()
+    loading_msg = bot.reply_to(message, "🔍 *Searching...*", parse_mode='Markdown')
+    
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(1)
+    bot.edit_message_text("🔍 *Searching...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    
+    cached_result = get_cached_result(phone)
+    
+    if cached_result:
+        if not unlimited_active:
+            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
+                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*", 
+                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                remove_active_session(user_id)
+                return
+        
+        increment_total_searches(user_id)
+        
+        output, first_name = format_lookup_result(cached_result, phone, user_id, unlimited_active, unlimited_expiry)
+        
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("🔍 NEW SEARCH", callback_data="lookup"),
+            InlineKeyboardButton("🏠 MENU", callback_data="main_menu")
+        )
+        markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
+        
+        send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+        
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
+        
+        remove_active_session(user_id)
+        return
+    
+    result, api_error_reason = call_number_lookup_api(phone)
+
+    if not result:
+        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="number")
+        notify_admin_api_issue("number", phone, api_error_reason)
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
+        remove_active_session(user_id)
+        return
+
+    if has_valid_number_results(result):
+        if not unlimited_active:
+            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
+                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*", 
+                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                remove_active_session(user_id)
+                return
+        
+        increment_total_searches(user_id)
+        save_cached_result(phone, result)
+        output, first_name = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
+        
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("🔍 NEW SEARCH", callback_data="lookup"),
+            InlineKeyboardButton("🏠 MENU", callback_data="main_menu")
+        )
+        markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
+        
+        send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+        
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
+        
+        remove_active_session(user_id)
+        
+    else:
+        if not unlimited_active:
+            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
+                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*",
+                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                remove_active_session(user_id)
+                return
+
+        increment_total_searches(user_id)
+        updated_total = get_total_credits(user_id)
+        output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+📱 Number
+`{phone}`
+
+🚫 No records available in database
+
+💡 Tips:
+• Check number again
+• Try another number
+• Ensure Indian mobile number
+
+━━━━━━━━━━━━━━━━━━
+💎 *Credits Used:* `{0 if unlimited_active else NUMBER_LOOKUP_COST}`
+💎 *Credits Left:* `{updated_total}`
+{footer()}
+"""
+
+        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+
+        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
+        remove_active_session(user_id)
 
 # ==================== SUPABASE FUNCTIONS ====================
 def get_user(telegram_user_id):
@@ -1877,28 +2527,40 @@ def get_stats():
             'protected_count': 0
         }
 
-def get_all_users():
+def get_all_users_batch(limit=1000, offset=0):
+    """Get users in batches for broadcasting"""
     try:
-        response = supabase.table("telegram_users").select("telegram_user_id").eq("is_banned", False).execute()
+        response = supabase.table("telegram_users").select("telegram_user_id").eq("is_banned", False).range(offset, offset + limit - 1).execute()
         return [row['telegram_user_id'] for row in response.data]
     except Exception as e:
-        print(f"Get all users error: {e}")
+        print(f"Get users batch error: {e}")
         return []
+
+def get_total_users_count():
+    try:
+        response = supabase.table("telegram_users").select("*", count="exact").eq("is_banned", False).execute()
+        return response.count or 0
+    except Exception as e:
+        print(f"Get total users error: {e}")
+        return 0
 
 def add_giveaway_credits(credits):
     try:
-        users = get_all_users()
+        users = []
+        offset = 0
+        batch_size = 1000
+        while True:
+            batch = get_all_users_batch(batch_size, offset)
+            if not batch:
+                break
+            users.extend(batch)
+            offset += batch_size
+        
         success_count = 0
-        failed_count = 0
         for user_id in users:
-            try:
-                add_credits(user_id, credits)
-                success_count += 1
-            except Exception as e:
-                print(f"Failed to add credits to {user_id}: {e}")
-                failed_count += 1
-            time.sleep(0.05)
-        return success_count, failed_count
+            add_credits(user_id, credits)
+            success_count += 1
+        return success_count, 0
     except Exception as e:
         print(f"Giveaway error: {e}")
         return 0, 0
@@ -2173,7 +2835,7 @@ def payment_session_reminder_worker(chat_id, user_id, tx_code, plan_label):
         if status == "pending":
             bot.send_message(
                 chat_id,
-                f"""⏰ *Payment Reminder* 💬
+                f"""⏰ *Payment Reminder*
 
 🧾 TX: `{tx_code}`
 📦 Plan: `{plan_label}`
@@ -2184,12 +2846,12 @@ Admin will verify your payment manually. We don't auto-reject payments.""",
                 parse_mode="Markdown"
             )
 
-        time.sleep(120)
+        time.sleep(60)
         status = get_manual_claim_status(tx_code)
         if status == "pending":
             bot.send_message(
                 chat_id,
-                f"""✅ *Don't worry!* 💪
+                f"""✅ *Don't worry!*
 
 🧾 TX: `{tx_code}`
 
@@ -2199,12 +2861,12 @@ No auto-rejection - Your payment will remain pending until admin manually verifi
                 parse_mode="Markdown"
             )
 
-        time.sleep(180)
+        time.sleep(60)
         status = get_manual_claim_status(tx_code)
         if status == "pending":
             bot.send_message(
                 chat_id,
-                f"""📌 *Final Reminder* ⏳
+                f"""📌 *Final Reminder*
 
 🧾 TX: `{tx_code}`
 
@@ -2239,7 +2901,7 @@ def send_manual_qr_payment(chat_id, user_id, username, plan_id, protected_number
 
     extra = f"\n📱 Number: `{protected_number}`" if protected_number else ""
     caption = f"""
-💳 *Scan & Pay* 📱
+💳 *Scan & Pay*
 ━━━━━━━━━━━━━━━━━━
 💰 Amount: ₹{plan['amount']}
 📦 Plan: `{plan['label']}`{extra}
@@ -2369,9 +3031,9 @@ def build_daily_report_text(stats_snapshot):
         f"💬 Telegram Lookups: `{telegram_searches}`",
         f"🆔 Identity Lookups: `{identity_searches}`",
         f"🏦 IFSC Lookups: `{ifsc_searches}`",
-        f"🪪 PAN Lookups: `{pan_searches}`",
+        f"📋 PAN Lookups: `{pan_searches}`",
         f"🚗 Vehicle Lookups: `{vehicle_searches}`",
-        f"🔍 Vehicle Owner Lookups: `{vehicle_owner_searches}`",
+        f"📱 Vehicle Owner Lookups: `{vehicle_owner_searches}`",
         f"📧 Email Lookups: `{email_searches}`",
         f"💎 Credits Used: `{credits_used}`",
         f"✅ Found: `{found}`",
@@ -2385,7 +3047,7 @@ def build_daily_report_text(stats_snapshot):
         for i, row in enumerate(top, 1):
             uname = row.get("username") or "no_username"
             display = f"@{uname}" if uname != "no_username" else row.get("first_name", "User")
-            lines.append(f"{i}. {display} | ID `{row.get('user_id')}` | `{row.get('searches', 0)}` lookups")
+            lines.append(f"{i}. {display} | ID `{row.get('user_id')}` | `{row.get('searches', 0)}` lookups | 📱 `{row.get('number_searches', 0)}` | 💬 `{row.get('telegram_searches', 0)}` | 🆔 `{row.get('identity_searches', 0)}` | 🏦 `{row.get('ifsc_searches', 0)}` | 📋 `{row.get('pan_searches', 0)}` | 🚗 `{row.get('vehicle_searches', 0)}` | 📱 `{row.get('vehicle_owner_searches', 0)}` | 📧 `{row.get('email_searches', 0)}` | 💎 `{row.get('credits_used', 0)}`")
     lines.append("━━━━━━━━━━━━━━━━")
     return "\n".join(lines)
 
@@ -2407,210 +3069,11 @@ def send_daily_search_report_loop():
             print(f"Daily report loop error: {e}")
             time.sleep(300)
 
-# ==================== NUMBER LOOKUP FUNCTIONS ====================
-def process_lookup(message):
-    user_id = message.from_user.id
-    raw_phone = str(message.text or "").strip()
-
-    if raw_phone == "❌ CANCEL" or raw_phone == "/cancel":
-        user_states.pop(user_id, None)
-        bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        return
-
-    if user_states.get(user_id) != "awaiting_number":
-        return
-
-    user_states.pop(user_id, None)
-    phone = normalize_indian_mobile(raw_phone)
-
-    if not phone:
-        bot.reply_to(message, "❌ *Invalid number!*\n\nEnter Indian mobile number.\nExamples: `9876543210` or `+919876543210`", 
-                    reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        return
-
-    with active_sessions_lock:
-        if user_id in active_sessions:
-            bot.reply_to(message, "⏳ *One number search already running!*\n\nPlease wait for current search result before starting another.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        active_sessions.add(user_id)
-    
-    if user_id in user_cooldown:
-        if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
-            wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            active_sessions.discard(user_id)
-            return
-    
-    user = get_user(user_id)
-    total_credits = get_total_credits(user_id)
-    
-    unlimited_active = False
-    unlimited_expiry = None
-    unlimited_expiry_raw = user.get('unlimited_expiry') if user else None
-    if unlimited_expiry_raw:
-        try:
-            if isinstance(unlimited_expiry_raw, str):
-                expiry_date = datetime.fromisoformat(unlimited_expiry_raw.replace('Z', '+00:00'))
-            else:
-                expiry_date = unlimited_expiry_raw
-            if expiry_date > datetime.now(timezone.utc):
-                unlimited_active = True
-                unlimited_expiry = unlimited_expiry_raw
-        except:
-            pass
-    
-    if total_credits < NUMBER_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        active_sessions.discard(user_id)
-        return
-    
-    if is_number_protected(phone):
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🛡️ PROTECT MY NUMBER", callback_data="protect"))
-        markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
-        bot.reply_to(message, f"""
-🛡️ *PROTECTED NUMBER* 🔒
-
-📱 `{phone}`
-
-This number is protected by the Number Protection Plan.
-
-The owner has purchased privacy protection. Details are hidden.
-
-You can also protect your number for ₹99!
-""", reply_markup=markup, parse_mode='Markdown')
-        active_sessions.discard(user_id)
-        return
-    
-    user_cooldown[user_id] = time.time()
-    loading_msg = bot.reply_to(message, "🔍 *Searching...*", parse_mode='Markdown')
-    
-    for anim in ["🔍", "🔎", "🔍"]:
-        time.sleep(0.8)
-        bot.edit_message_text(f"{anim} *Searching...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    
-    cached_result = get_cached_result(phone)
-    
-    if cached_result:
-        if not unlimited_active:
-            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*", 
-                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-                active_sessions.discard(user_id)
-                return
-        
-        increment_total_searches(user_id)
-        
-        output = format_lookup_response(cached_result, phone, "Number", user_id, NUMBER_LOOKUP_COST, unlimited_active, unlimited_expiry)
-        
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton("🔍 NEW SEARCH", callback_data="lookup"),
-            InlineKeyboardButton("🏠 MENU", callback_data="main_menu")
-        )
-        markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
-        
-        sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
-        
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
-        
-        active_sessions.discard(user_id)
-        return
-    
-    result, error = call_number_lookup_api(phone)
-
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="number")
-        notify_admin_api_issue("number", phone, error)
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
-        active_sessions.discard(user_id)
-        return
-
-    # Check if result has data
-    has_data = False
-    if isinstance(result, dict):
-        if "raw_response" in result and result["raw_response"]:
-            has_data = True
-        elif len(result) > 0:
-            has_data = True
-    elif result:
-        has_data = True
-
-    if has_data:
-        if not unlimited_active:
-            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*", 
-                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-                active_sessions.discard(user_id)
-                return
-        
-        increment_total_searches(user_id)
-        save_cached_result(phone, result)
-        output = format_lookup_response(result, phone, "Number", user_id, NUMBER_LOOKUP_COST, unlimited_active, unlimited_expiry)
-        
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton("🔍 NEW SEARCH", callback_data="lookup"),
-            InlineKeyboardButton("🏠 MENU", callback_data="main_menu")
-        )
-        markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
-        
-        sent_messages = send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
-        
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
-        
-        active_sessions.discard(user_id)
-        
-    else:
-        if not unlimited_active:
-            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*",
-                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-                active_sessions.discard(user_id)
-                return
-
-        increment_total_searches(user_id)
-        updated_total = get_total_credits(user_id)
-        output = f"""
-❌ *NO DATA FOUND* ❌
-━━━━━━━━━━━━━━━━━━
-
-📱 Number
-`{phone}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check number again
-• Try another number
-• Ensure Indian mobile number
-
-━━━━━━━━━━━━━━━━━━
-💎 *Credits Used:* `{0 if unlimited_active else NUMBER_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-{footer()}
-"""
-
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
-        active_sessions.discard(user_id)
-
-def notify_admin_api_issue(lookup_type, query, error_reason):
-    """Send compact admin-only debug alert."""
-    try:
-        bot.send_message(
-            ADMIN_ID,
-            f"⚠️ *API TEMP ISSUE*\n\nType: `{lookup_type}`\nQuery: `{query}`\nReason: `{str(error_reason)[:500]}`\n\nUser credits were not deducted.",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"Admin API issue notify failed: {e}")
-
+# ==================== PROTECTION MENU ====================
 def show_protection_menu(message):
     user_id = message.from_user.id
     text = f"""
-🛡️ *PROTECTION SERVICES* 🔒
+🛡️ *PROTECTION SERVICES*
 ━━━━━━━━━━━━━━━━━━
 
 📱 Number Protection → ₹99
@@ -2628,6 +3091,7 @@ def process_protection_payment_input(message, plan_id):
     user_id = message.from_user.id
     if message.text == "❌ CANCEL" or message.text == "/cancel":
         user_states.pop(user_id, None)
+        remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
 
@@ -2640,19 +3104,24 @@ def process_protection_payment_input(message, plan_id):
     if plan_id == "protect_number":
         if not re.match(r'^[6-9]\d{9}$', value):
             bot.reply_to(message, "❌ *Invalid number!*\n\nEnter 10-digit Indian number.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
         if is_number_protected(value):
             bot.reply_to(message, f"❌ Already protected: `{value}`", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
     elif plan_id == "protect_telegram":
         if not is_valid_telegram_id(value):
             bot.reply_to(message, "❌ *Invalid Telegram ID!*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
         if is_telegram_protected(value):
             bot.reply_to(message, f"❌ Already protected: `{value}`", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            remove_active_session(user_id)
             return
     else:
         bot.reply_to(message, "❌ Invalid protection plan.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        remove_active_session(user_id)
         return
     send_manual_qr_payment(message.chat.id, user_id, message.from_user.username or "no_username", plan_id, protected_number=value)
 
@@ -2661,7 +3130,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 7.0.3"
+    return "TraceX Bot Running - Version 7.0"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -2675,13 +3144,13 @@ def keep_alive():
 # ==================== PAYMENT HANDLERS ====================
 def show_credit_packs(message, user_id):
     packs_msg = f"""
-💎 *PREMIUM CREDIT STORE* 🛒
+💎 *PREMIUM CREDIT STORE*
 ━━━━━━━━━━━━━━━━━━
 
-💰 *CREDIT PACKS*
-• 40 Credits → ₹20  
-• 120 Credits → ₹50
-• 400 Credits → ₹100
+💰 *CREDIT PACKS (1 Credit = ₹1)*
+• 40 Credits → ₹40  
+• 120 Credits → ₹120
+• 400 Credits → ₹400
 
 🚀 *UNLIMITED PLANS*
 • 1 Hour Unlimited → ₹49
@@ -2715,8 +3184,8 @@ def handle_plan_selection(call):
 
     if plan_id in ["protect_number", "protect_telegram"]:
         labels = {
-            "protect_number": ("📱 *NUMBER PROTECTION* 🔒", "Enter the 10-digit mobile number you want to protect:", "`Example: 9876543210`"),
-            "protect_telegram": ("💬 *TELEGRAM NUMBER PROTECTION* 🔒", "Enter numeric Telegram user ID:", "`Example: 7850023357`")
+            "protect_number": ("📱 *NUMBER PROTECTION*", "Enter the 10-digit mobile number you want to protect:", "`Example: 9876543210`"),
+            "protect_telegram": ("💬 *TELEGRAM NUMBER PROTECTION*", "Enter numeric Telegram user ID:", "`Example: 7850023357`")
         }
         title, prompt, example = labels[plan_id]
         user_states[user_id] = {"state": "awaiting_protection_input", "plan_id": plan_id}
@@ -2745,7 +3214,7 @@ Type /cancel to abort""",
 def show_bot_booking(message):
     user_id = message.from_user.id
     booking_msg = f"""
-🤖 *CUSTOM BOT BOOKING* 🛠️
+🤖 *CUSTOM BOT BOOKING*
 ━━━━━━━━━━━━━━━━━━
 
 💰 *Bot setup add-on:* ₹399
@@ -2789,6 +3258,12 @@ def start(message):
     except:
         pass
     
+    # Check channel membership
+    all_joined, missing = check_all_channels(user_id)
+    if not all_joined and user_id != ADMIN_ID:
+        send_join_required(message.chat.id, missing)
+        return
+    
     total_credits = get_total_credits(user_id)
     unlimited_expiry = user.get('unlimited_expiry') if user else None
     
@@ -2816,17 +3291,19 @@ def start(message):
 🔎 Total Searches: `{user.get('total_searches', 0) if user else 0}`
 
 ━━━━━━━━━━━━━━━━
-🎯 *FEATURES* ✨
+🎯 *FEATURES*
 • 📱 Number Lookup (2 Credits)
-• 💬 Telegram Lookup (5 Credits)
+• 💬 Telegram ID Lookup (5 Credits)
 • 🆔 Identity Lookup (5 Credits)
 • 🏦 IFSC Lookup (3 Credits)
 • 📧 Email Lookup (20 Credits)
-• 🪪 PAN Lookup (5 Credits)
 • 🚗 Vehicle Lookup (5 Credits)
-• 🔍 Vehicle Owner Lookup (10 Credits)
-• Fast Response • Secure Credits System
-• Unlimited Plans Available • Protection Services
+• 📱 Vehicle to Owner (10 Credits)
+• 📋 PAN Card Lookup (5 Credits)
+• Fast Response
+• Secure Credits System
+• Unlimited Plans Available
+• Number Protection Service
 
 ━━━━━━━━━━━━━━━━
 🎁 New users get 10 free credits!
@@ -2835,19 +3312,7 @@ def start(message):
 {footer()}
 """
     
-    # Check channel membership - store result but send welcome either way
-    missing = is_all_channels_member(user_id)
-    if missing:
-        msg = get_missing_channels_message(missing)
-        bot.send_message(
-            message.chat.id,
-            msg,
-            reply_markup=join_required_markup(),
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
-    else:
-        bot.send_message(message.chat.id, welcome_msg, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+    bot.send_message(message.chat.id, welcome_msg, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
 @bot.message_handler(commands=['cancel'])
 def cancel_command(message):
@@ -2856,8 +3321,7 @@ def cancel_command(message):
         del user_states[user_id]
     if user_id in temp_data:
         del temp_data[user_id]
-    with active_sessions_lock:
-        active_sessions.discard(user_id)
+    remove_active_session(user_id)
     bot.reply_to(message, "❌ Cancelled. Use /start for main menu.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
 @bot.message_handler(content_types=['photo', 'document'])
@@ -2892,7 +3356,7 @@ def payment_screenshot_handler(message):
     except Exception:
         pass
     
-    caption = f"""📸 *PAYMENT SCREENSHOT RECEIVED* 🧾
+    caption = f"""📸 *PAYMENT SCREENSHOT RECEIVED*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 👤 *User Details:*
@@ -2917,15 +3381,15 @@ def payment_screenshot_handler(message):
     )
 
     try:
-        # Try to send to admin channel first
+        # Try to forward to admin channel
         try:
-            bot.copy_message(ADMIN_CHANNEL_ID, message.chat.id, message.message_id)
+            bot.forward_message(ADMIN_CHANNEL_ID, message.chat.id, message.message_id)
         except Exception as forward_error:
-            print(f"Admin group screenshot copy failed: {forward_error}")
+            print(f"Admin group forward failed: {forward_error}")
             try:
-                bot.copy_message(ADMIN_ID, message.chat.id, message.message_id)
+                bot.forward_message(ADMIN_ID, message.chat.id, message.message_id)
             except Exception as dm_forward_error:
-                print(f"Admin DM screenshot copy failed: {dm_forward_error}")
+                print(f"Admin DM forward failed: {dm_forward_error}")
         
         send_admin_alert(caption, reply_markup=admin_markup, parse_mode='Markdown')
         bot.reply_to(message, f"✅ Screenshot sent to admin.\n\n🧾 TX: `{tx_code}`\n📦 Plan: `{plan_name}`\n⏳ Wait for manual verification.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
@@ -2964,21 +3428,15 @@ def text_handler(message):
         bot.reply_to(message, f"🚫 YOU ARE BANNED\n\nContact: {ADMIN_USERNAME}")
         return
 
-    # Check channel membership - silently check every time
-    missing = is_all_channels_member(user_id)
-    if missing:
-        msg = get_missing_channels_message(missing)
-        bot.send_message(
-            message.chat.id,
-            msg,
-            reply_markup=join_required_markup(),
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
+    # Check channel membership
+    all_joined, missing = check_all_channels(user_id)
+    if not all_joined and user_id != ADMIN_ID:
+        send_join_required(message.chat.id, missing)
         return
 
     text = message.text.strip()
 
+    # Check for active sessions first
     if user_states.get(user_id) == "awaiting_number":
         process_lookup(message)
         return
@@ -3034,19 +3492,19 @@ def text_handler(message):
         bot.reply_to(message, "📧 *Enter Email Address:*\n\n`Example: user@example.com`\n\n💎 Cost: `20 credits` per search\n\nType ❌ CANCEL to abort", 
                     reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
     
-    elif text == "🪪 PAN LOOKUP":
-        user_states[user_id] = "awaiting_pan_input"
-        bot.reply_to(message, "🪪 *Enter PAN Card Number:*\n\n`Example: NTEPK1628C`\n\n💎 Cost: `5 credits` per search\n\nType ❌ CANCEL to abort", 
-                    reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
-    
     elif text == "🚗 VEHICLE LOOKUP":
         user_states[user_id] = "awaiting_vehicle_input"
-        bot.reply_to(message, "🚗 *Enter Vehicle Registration Number:*\n\n`Example: BR07PB6268`\n\n💎 Cost: `5 credits` per search\n\nType ❌ CANCEL to abort", 
+        bot.reply_to(message, "🚗 *Enter Vehicle Number:*\n\n`Example: BR07PB6268`\n\n💎 Cost: `5 credits` per search\n\nType ❌ CANCEL to abort", 
                     reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
     
-    elif text == "🔍 VEHICLE OWNER":
+    elif text == "📋 PAN CARD LOOKUP":
+        user_states[user_id] = "awaiting_pan_input"
+        bot.reply_to(message, "📋 *Enter PAN Card Number:*\n\n`Example: ABCDE1234F`\n\n💎 Cost: `5 credits` per search\n\nType ❌ CANCEL to abort", 
+                    reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
+    
+    elif text == "📱 VEHICLE TO OWNER":
         user_states[user_id] = "awaiting_vehicle_owner_input"
-        bot.reply_to(message, "🔍 *Enter Vehicle Number for Owner Lookup:*\n\n`Example: BR07PB6268`\n\n💎 Cost: `10 credits` per search\n\nType ❌ CANCEL to abort", 
+        bot.reply_to(message, "📱 *Enter Vehicle Number:*\n\n`Example: BR07PB6268`\n\n💎 Cost: `10 credits` per search\n\nType ❌ CANCEL to abort", 
                     reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
     
     elif text == "💎 MY CREDITS":
@@ -3064,14 +3522,14 @@ def text_handler(message):
             except:
                 pass
         credits_msg = f"""
-*💎 MY CREDITS* 💰
+*💎 MY CREDITS*
 ━━━━━━━━━━━━━━━━━━
 💰 *Credits:* `{total_credits}`{unlimited_text}
 🔎 *Used:* `{user.get('total_searches', 0) if user else 0}`
 ━━━━━━━━━━━━━━━━━━
-*📦 CREDIT PACKS*
-• 40 Credits → ₹20  
-• 120 Credits → ₹50
+*📦 CREDIT PACKS (1 Credit = ₹1)*
+• 40 Credits → ₹40  
+• 120 Credits → ₹120
 • 400 Credits → ₹100
 *🚀 UNLIMITED PLANS*
 • 1 Hour → ₹49
@@ -3092,7 +3550,7 @@ def text_handler(message):
     
     elif text == "📢 SUPPORT":
         support_msg = f"""
-📢 *SUPPORT & COMMUNITY* 🤝
+📢 *SUPPORT & COMMUNITY*
 ━━━━━━━━━━━━━━━━━━
 
 👨‍💻 *Admin:* {ADMIN_USERNAME}
@@ -3116,8 +3574,7 @@ For any issues, contact admin directly.
     elif text == "❌ CANCEL":
         user_states.pop(user_id, None)
         temp_data.pop(user_id, None)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
     
     else:
@@ -3133,31 +3590,25 @@ def callback_handler(call):
         return
 
     if call.data == "check_all_join":
-        missing = is_all_channels_member(user_id)
-        if not missing:
-            bot.answer_callback_query(call.id, "All channels joined verified! ✅", show_alert=True)
+        all_joined, missing = check_all_channels(user_id)
+        if all_joined or user_id == ADMIN_ID:
+            bot.answer_callback_query(call.id, "✅ All channels joined!", show_alert=True)
             try:
-                bot.edit_message_text("✅ *All channels joined verified!*\n\nUse /start to open bot menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode="Markdown")
+                bot.edit_message_text("✅ *All channels joined!*\n\nUse /start to open bot menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode="Markdown")
             except Exception:
-                bot.send_message(call.message.chat.id, "✅ All channels joined verified! Use /start")
+                bot.send_message(call.message.chat.id, "✅ All channels joined! Use /start")
         else:
-            msg = get_missing_channels_message(missing)
-            bot.answer_callback_query(call.id, "Please join all missing channels", show_alert=True)
-            try:
-                bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=join_required_markup(), parse_mode="Markdown")
-            except Exception:
-                bot.send_message(call.message.chat.id, msg, reply_markup=join_required_markup(), parse_mode="Markdown")
+            if missing:
+                channel_list = "\n".join([f"• {ch['name']}: {ch['link']}" for ch in missing])
+                bot.answer_callback_query(call.id, f"Missing: {', '.join([ch['name'] for ch in missing])}", show_alert=True)
+                send_join_required(call.message.chat.id, missing)
         return
 
-    # Check channel membership for all other actions
-    missing = is_all_channels_member(user_id)
-    if missing:
-        msg = get_missing_channels_message(missing)
-        bot.answer_callback_query(call.id, "Please join all channels first", show_alert=True)
-        try:
-            bot.edit_message_text(msg, call.message.chat.id, call.message.message_id, reply_markup=join_required_markup(), parse_mode="Markdown")
-        except Exception:
-            bot.send_message(call.message.chat.id, msg, reply_markup=join_required_markup(), parse_mode="Markdown")
+    # Check channel membership for all other callbacks
+    all_joined, missing = check_all_channels(user_id)
+    if not all_joined and user_id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "Join all channels first!", show_alert=True)
+        send_join_required(call.message.chat.id, missing)
         return
     
     if call.data == "main_menu":
@@ -3173,8 +3624,7 @@ def callback_handler(call):
     elif call.data == "cancel":
         user_states.pop(user_id, None)
         temp_data.pop(user_id, None)
-        with active_sessions_lock:
-            active_sessions.discard(user_id)
+        remove_active_session(user_id)
         try:
             bot.edit_message_text("❌ Cancelled. Use /start for main menu.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         except Exception:
@@ -3208,28 +3658,28 @@ def callback_handler(call):
         bot.register_next_step_handler(msg, process_ifsc_lookup)
         bot.answer_callback_query(call.id)
     
-    elif call.data == "email_lookup":
-        user_states[user_id] = "awaiting_email_input"
-        msg = bot.send_message(call.message.chat.id, "📧 *Enter Email Address:*\n\n`Example: user@example.com`\n\n💎 Cost: `20 credits` per search\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
-        bot.register_next_step_handler(msg, process_email_lookup)
-        bot.answer_callback_query(call.id)
-    
     elif call.data == "pan_lookup":
         user_states[user_id] = "awaiting_pan_input"
-        msg = bot.send_message(call.message.chat.id, "🪪 *Enter PAN Card Number:*\n\n`Example: NTEPK1628C`\n\n💎 Cost: `5 credits` per search\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+        msg = bot.send_message(call.message.chat.id, "📋 *Enter PAN Card Number:*\n\n`Example: ABCDE1234F`\n\n💎 Cost: `5 credits` per search\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
         bot.register_next_step_handler(msg, process_pan_lookup)
         bot.answer_callback_query(call.id)
     
     elif call.data == "vehicle_lookup":
         user_states[user_id] = "awaiting_vehicle_input"
-        msg = bot.send_message(call.message.chat.id, "🚗 *Enter Vehicle Registration Number:*\n\n`Example: BR07PB6268`\n\n💎 Cost: `5 credits` per search\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+        msg = bot.send_message(call.message.chat.id, "🚗 *Enter Vehicle Number:*\n\n`Example: BR07PB6268`\n\n💎 Cost: `5 credits` per search\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
         bot.register_next_step_handler(msg, process_vehicle_lookup)
         bot.answer_callback_query(call.id)
     
     elif call.data == "vehicle_owner_lookup":
         user_states[user_id] = "awaiting_vehicle_owner_input"
-        msg = bot.send_message(call.message.chat.id, "🔍 *Enter Vehicle Number for Owner Lookup:*\n\n`Example: BR07PB6268`\n\n💎 Cost: `10 credits` per search\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+        msg = bot.send_message(call.message.chat.id, "📱 *Enter Vehicle Number:*\n\n`Example: BR07PB6268`\n\n💎 Cost: `10 credits` per search\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
         bot.register_next_step_handler(msg, process_vehicle_owner_lookup)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "email_lookup":
+        user_states[user_id] = "awaiting_email_input"
+        msg = bot.send_message(call.message.chat.id, "📧 *Enter Email Address:*\n\n`Example: user@example.com`\n\n💎 Cost: `20 credits` per search\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+        bot.register_next_step_handler(msg, process_email_lookup)
         bot.answer_callback_query(call.id)
     
     elif call.data in ["protect", "protection_menu"]:
@@ -3251,15 +3701,15 @@ def callback_handler(call):
             except:
                 pass
         credits_msg = f"""
-*💎 MY CREDITS* 💰
+*💎 MY CREDITS*
 ━━━━━━━━━━━━━━━━━━
 💰 *Credits:* `{total_credits}`{unlimited_text}
 🔎 *Used:* `{user.get('total_searches', 0) if user else 0}`
 ━━━━━━━━━━━━━━━━━━
-*📦 CREDIT PACKS*
-• 40 Credits → ₹20  
-• 120 Credits → ₹50
-• 400 Credits → ₹100
+*📦 CREDIT PACKS (1 Credit = ₹1)*
+• 40 Credits → ₹40  
+• 120 Credits → ₹120
+• 400 Credits → ₹400
 *🚀 UNLIMITED PLANS*
 • 1 Hour → ₹49
 • 1 Day → ₹99
@@ -3335,7 +3785,7 @@ def callback_handler(call):
             except:
                 pass
         profile_msg = f"""
-👤 *USER PROFILE* 👤
+👤 *USER PROFILE*
 ━━━━━━━━━━━━━━━━━━
 🆔 User ID: `{user_id}`
 👤 Name: `{call.from_user.first_name}`
@@ -3353,7 +3803,7 @@ def callback_handler(call):
     
     elif call.data == "help":
         help_msg = f"""
-📖 *HOW TO USE TRACEX* 📚
+📖 *HOW TO USE TRACEX*
 ━━━━━━━━━━━━━━━━━━
 1️⃣ Click NUMBER LOOKUP
 2️⃣ Enter mobile number
@@ -3380,23 +3830,23 @@ def callback_handler(call):
 2️⃣ Enter email address
 3️⃣ Get email information
 
-🪪 *PAN LOOKUP*
-1️⃣ Click PAN LOOKUP
-2️⃣ Enter PAN card number
-3️⃣ Get PAN details
-
 🚗 *VEHICLE LOOKUP*
 1️⃣ Click VEHICLE LOOKUP
 2️⃣ Enter vehicle number
 3️⃣ Get vehicle details
 
-🔍 *VEHICLE OWNER*
-1️⃣ Click VEHICLE OWNER
+📱 *VEHICLE TO OWNER*
+1️⃣ Click VEHICLE TO OWNER
 2️⃣ Enter vehicle number
 3️⃣ Get owner details
 
+📋 *PAN CARD LOOKUP*
+1️⃣ Click PAN CARD LOOKUP
+2️⃣ Enter PAN number
+3️⃣ Get PAN details
+
 ━━━━━━━━━━━━━━━━━━
-💎 *CREDIT SYSTEM*
+💎 *CREDIT SYSTEM (1 Credit = ₹1)*
 • New User: `10` free credits
 • Credits never expire
 • Number Lookup: 2 credits
@@ -3404,9 +3854,9 @@ def callback_handler(call):
 • Identity Lookup: 5 credits
 • IFSC Lookup: 3 credits
 • Email Lookup: 20 credits
-• PAN Lookup: 5 credits
 • Vehicle Lookup: 5 credits
-• Vehicle Owner: 10 credits
+• Vehicle to Owner: 10 credits
+• PAN Card Lookup: 5 credits
 • Unlimited plans available
 • Protection plans cost ₹99 each
 ━━━━━━━━━━━━━━━━━━
@@ -3421,9 +3871,9 @@ def callback_handler(call):
 ✅ Identity/Aadhar Lookup
 ✅ IFSC Bank Lookup
 ✅ Email Lookup
-✅ PAN Card Lookup
 ✅ Vehicle Lookup
-✅ Vehicle Owner Lookup
+✅ Vehicle to Owner
+✅ PAN Card Lookup
 ✅ Unlimited Plans
 ✅ Number Protection
 ✅ Secure Payments
@@ -3458,7 +3908,7 @@ def callback_handler(call):
             return
         if call.data == "admin_add":
             user_states[user_id] = "admin_add"
-            msg = bot.send_message(call.message.chat.id, "➕ *ADD CREDITS / UNLIMITED* 💰\n\nCredits format:\n`user_id credits`\nExample: `123456789 50`\n\nUnlimited format:\n`user_id u1h` / `user_id u1d` / `user_id u1w` / `user_id u1m`\nExample: `123456789 u1d`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            msg = bot.send_message(call.message.chat.id, "➕ *ADD CREDITS / UNLIMITED*\n\nCredits format:\n`user_id credits`\nExample: `123456789 50`\n\nUnlimited format:\n`user_id u1h/u1d/u1w/u1m`\nExample: `123456789 u1d`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
             bot.register_next_step_handler(msg, process_admin_add)
         elif call.data == "admin_remove":
             user_states[user_id] = "admin_remove"
@@ -3466,19 +3916,19 @@ def callback_handler(call):
             bot.register_next_step_handler(msg, process_admin_remove)
         elif call.data == "admin_ban":
             user_states[user_id] = "admin_ban"
-            msg = bot.send_message(call.message.chat.id, "🚫 *BAN USER* ⛔\n\nEnter user ID to ban\nExample: `123456789`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            msg = bot.send_message(call.message.chat.id, "🚫 *BAN USER*\n\nEnter user ID to ban\nExample: `123456789`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
             bot.register_next_step_handler(msg, process_admin_ban)
         elif call.data == "admin_unban":
             user_states[user_id] = "admin_unban"
-            msg = bot.send_message(call.message.chat.id, "✅ *UNBAN USER* 🔓\n\nEnter user ID to unban\nExample: `123456789`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            msg = bot.send_message(call.message.chat.id, "✅ *UNBAN USER*\n\nEnter user ID to unban\nExample: `123456789`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
             bot.register_next_step_handler(msg, process_admin_unban)
         elif call.data == "admin_broadcast":
             user_states[user_id] = "admin_broadcast"
-            msg = bot.send_message(call.message.chat.id, "📢 *BROADCAST* 📣\n\nSend your broadcast message below:\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            msg = bot.send_message(call.message.chat.id, "📢 *BROADCAST*\n\nSend your broadcast message below:\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
             bot.register_next_step_handler(msg, process_admin_broadcast)
         elif call.data == "admin_giveaway":
             user_states[user_id] = "admin_giveaway"
-            msg = bot.send_message(call.message.chat.id, "🎁 *GIVEAWAY CREDITS* 🎉\n\nEnter number of credits to give to ALL users:\n\nExample: `50`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+            msg = bot.send_message(call.message.chat.id, "🎁 *GIVEAWAY CREDITS*\n\nEnter number of credits to give to ALL users:\n\nExample: `50`\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
             bot.register_next_step_handler(msg, process_admin_giveaway)
         elif call.data == "admin_stats":
             show_admin_stats(call.message)
@@ -3492,7 +3942,7 @@ def callback_handler(call):
 def show_admin_panel(message):
     stats = get_stats()
     admin_msg = f"""
-*🛠 ADMIN PANEL* ⚙️
+*🛠 ADMIN PANEL*
 *📊 STATS*
 👥 Users: `{stats['total_users']}`
 🔍 Searches: `{stats['total_searches']}`
@@ -3529,7 +3979,7 @@ def show_admin_panel(message):
 def show_admin_stats(message):
     stats = get_stats()
     stats_msg = f"""
-*📊 DETAILED STATS* 📈
+*📊 DETAILED STATS*
 ━━━━━━━━━━━━━━━━━━
 👥 *USERS*
 ━━━━━━━━━━━━━━━━━━
@@ -3562,7 +4012,7 @@ def show_admin_transactions(message):
     if not transactions:
         trans_msg = "📋 *No transactions found!*"
     else:
-        trans_msg = "*📋 RECENT TRANSACTIONS* 📋\n\n"
+        trans_msg = "*📋 RECENT TRANSACTIONS*\n\n"
         for trans in transactions:
             status_emoji = "✅" if trans.get('status') == "success" else "⏳" if trans.get('status') == "pending" else "❌"
             trans_msg += f"{status_emoji} `{trans.get('payment_id', '')[:20]}` | User: `{trans.get('telegram_user_id', '')}` | ₹{trans.get('amount', 0)} | {trans.get('plan_id', '')}\n"
@@ -3596,7 +4046,7 @@ def process_admin_add(message):
             label = get_plan_config(value).get("label", value)
             bot.reply_to(message, f"✅ Added `{label}` to `{target_user}`\nExpires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`", parse_mode='Markdown')
             try:
-                bot.send_message(target_user, f"🚀 *Unlimited Plan Added!* ✨\nPlan: `{label}`\nExpires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`\n{footer()}", parse_mode='Markdown', disable_web_page_preview=True)
+                bot.send_message(target_user, f"🚀 *Unlimited Plan Added!*\nPlan: `{label}`\nExpires: `{new_expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC`\n{footer()}", parse_mode='Markdown', disable_web_page_preview=True)
             except Exception:
                 pass
             return
@@ -3605,7 +4055,7 @@ def process_admin_add(message):
         new_total = add_credits(target_user, credits)
         bot.reply_to(message, f"✅ Added {credits} credits to `{target_user}`\nNew total: `{new_total}`", parse_mode='Markdown')
         try:
-            bot.send_message(target_user, f"✅ *{credits} credits added!* 💰\nNew total: `{new_total}`\n{footer()}", parse_mode='Markdown', disable_web_page_preview=True)
+            bot.send_message(target_user, f"✅ *{credits} credits added!*\nNew total: `{new_total}`\n{footer()}", parse_mode='Markdown', disable_web_page_preview=True)
         except Exception:
             pass
     except Exception:
@@ -3700,7 +4150,7 @@ def process_admin_broadcast(message):
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("✅ YES, SEND", callback_data="broadcast_confirm"), InlineKeyboardButton("❌ NO, CANCEL", callback_data="cancel"))
     temp_data[user_id] = {'broadcast_text': broadcast_text}
-    bot.reply_to(message, f"📢 *Confirm Broadcast* 📣\n\n📝 Message:\n`{broadcast_text}`\n\nSend to all active users?", reply_markup=markup, parse_mode='Markdown')
+    bot.reply_to(message, f"📢 *Confirm Broadcast*\n\n📝 Message:\n`{broadcast_text}`\n\nSend to all active users?", reply_markup=markup, parse_mode='Markdown')
 
 def process_admin_giveaway(message):
     user_id = message.from_user.id
@@ -3716,7 +4166,7 @@ def process_admin_giveaway(message):
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("✅ YES, GIVE AWAY", callback_data="giveaway_confirm"), InlineKeyboardButton("❌ NO, CANCEL", callback_data="cancel"))
         temp_data[user_id] = {'giveaway_credits': credits}
-        bot.reply_to(message, f"🎁 *Confirm Giveaway* 🎉\n\nGive `{credits}` credits to ALL active users?\n\nThis will be sent to all users immediately!", reply_markup=markup, parse_mode='Markdown')
+        bot.reply_to(message, f"🎁 *Confirm Giveaway*\n\nGive `{credits}` credits to ALL active users?\n\nThis will be sent to all users immediately!", reply_markup=markup, parse_mode='Markdown')
     except:
         bot.reply_to(message, "❌ Invalid number! Enter a valid credit amount.", parse_mode='Markdown')
 
@@ -3730,30 +4180,49 @@ def confirm_broadcast(call):
         bot.edit_message_text("❌ Broadcast cancelled. No data found.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id))
         return
     broadcast_text = temp_data[user_id]['broadcast_text']
-    users = get_all_users()
+    
+    # Get total user count
+    total_users = get_total_users_count()
+    bot.edit_message_text(f"📡 *Broadcasting to {total_users} users...*\n\nPlease wait...", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    
     success = 0
     failed = 0
-    bot.edit_message_text(f"📡 *Broadcasting to {len(users)} users...* 📡\n\nPlease wait...", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-    for target_user_id in users:
-        try:
-            broadcast_msg = f"""
-*📢 TRACEX BROADCAST* 📣
+    offset = 0
+    batch_size = 100
+    
+    while True:
+        users = get_all_users_batch(batch_size, offset)
+        if not users:
+            break
+        for target_user_id in users:
+            try:
+                broadcast_msg = f"""
+*📢 TRACEX BROADCAST*
 {broadcast_text}
 ━━━━━━━━━━━━━━━━
 📞 *Support:* {ADMIN_USERNAME}
 👥 *Group:* [Join Community]({GROUP_LINK})
 """
-            bot.send_message(target_user_id, broadcast_msg, parse_mode='Markdown', disable_web_page_preview=True)
-            success += 1
-        except Exception as e:
-            failed += 1
-            print(f"Broadcast failed to {target_user_id}: {e}")
-        time.sleep(0.05)
+                bot.send_message(target_user_id, broadcast_msg, parse_mode='Markdown', disable_web_page_preview=True)
+                success += 1
+            except Exception as e:
+                failed += 1
+                print(f"Broadcast failed to {target_user_id}: {e}")
+            time.sleep(0.05)
+        offset += batch_size
+        # Update progress
+        progress_msg = f"📡 *Broadcasting...*\n\n✅ Sent: `{success}` users\n❌ Failed: `{failed}` users\n📝 Total: `{total_users}` users\n⏳ Progress: `{min(offset, total_users)}/{total_users}`"
+        try:
+            bot.edit_message_text(progress_msg, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+        except:
+            pass
+    
     result_msg = f"""
-✅ *Broadcast Complete!* 📢
+✅ *Broadcast Complete!*
 📊 *Statistics:*
 • ✅ Sent: `{success}` users
-• ❌ Failed: `{failed}` users• 📝 Total: `{len(users)}` users
+• ❌ Failed: `{failed}` users
+• 📝 Total: `{total_users}` users
 ⏱️ Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}
 """
     bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
@@ -3769,7 +4238,10 @@ def confirm_giveaway(call):
         bot.edit_message_text("❌ Giveaway cancelled. No data found.", call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id))
         return
     credits = temp_data[user_id]['giveaway_credits']
-    bot.edit_message_text(f"🎁 *Processing Giveaway...* 🎉\n\nGiving `{credits}` credits to all users...", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    
+    total_users = get_total_users_count()
+    bot.edit_message_text(f"🎁 *Processing Giveaway...*\n\nGiving `{credits}` credits to all `{total_users}` users...", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    
     success, failed = add_giveaway_credits(credits)
     result_msg = f"""
 🎉 *Giveaway Complete!* 🎉
@@ -3830,46 +4302,42 @@ def admin_api_test(message):
     if not phone:
         bot.reply_to(message, "Usage: /apitest 9876787776")
         return
-    bot.reply_to(message, "🧪 Testing API with retry... check logs too.")
-    result, error = call_number_lookup_api(phone)
-    if result:
-        bot.reply_to(message, f"✅ API OK\nResult: `{str(result)[:500]}`", parse_mode="Markdown")
+    bot.reply_to(message, "🧪 Testing Number API...")
+    result, err = call_number_lookup_api(phone)
+    if result and has_valid_number_results(result):
+        total = len(result.get("results", {})) if isinstance(result.get("results"), dict) else 1
+        bot.reply_to(message, f"✅ Number API OK\nResults: `{total}`", parse_mode="Markdown")
     else:
-        bot.reply_to(message, f"❌ API failed\nReason: `{str(error)[:500]}`", parse_mode="Markdown")
+        bot.reply_to(message, f"❌ Number API failed\nReason: `{str(err)[:200]}`", parse_mode="Markdown")
 
 # ==================== START BOT ====================
 if __name__ == "__main__":
-    print("=" * 50)
+    print("=" * 60)
     print(f"TraceX Lookup v{BOT_VERSION} is starting...")
     print(f"Admin ID: {ADMIN_ID}")
     print(f"Admin: {ADMIN_USERNAME}")
-    print("=" * 50)
-    print("✅ New Features Added:")
-    print("   • 📧 Email Lookup (20 Credits)")
-    print("   • 🪪 PAN Card Lookup (5 Credits)")
-    print("   • 🚗 Vehicle Lookup (5 Credits)")
-    print("   • 🔍 Vehicle to Owner Number (10 Credits)")
-    print("   • Updated APIs for all lookups")
-    print("   • 4 Channel Verification System")
-    print("   • Raw Response Pretty Print")
-    print("   • Updated Pricing:")
-    print("     • Number: 2 Credits")
-    print("     • Telegram: 5 Credits")
-    print("     • Identity: 5 Credits")
-    print("     • IFSC: 3 Credits")
-    print("     • Email: 20 Credits")
-    print("     • PAN: 5 Credits")
-    print("     • Vehicle: 5 Credits")
-    print("     • Vehicle Owner: 10 Credits")
-    print("   • Unlimited Plans:")
+    print("=" * 60)
+    print("✅ New Features Added in v7.0:")
+    print("   • PAN Card Lookup (5 Credits)")
+    print("   • Vehicle to Owner Number (10 Credits)")
+    print("   • Vehicle Lookup (5 Credits)")
+    print("   • Email Lookup (20 Credits)")
+    print("   • Updated All API Endpoints")
+    print("   • New Pricing: 1 Credit = ₹1")
+    print("   • New Unlimited Plans:")
     print("     • 1 Hour - ₹49")
     print("     • 1 Day - ₹99")
     print("     • 7 Days - ₹499")
     print("     • 30 Days - ₹1499")
-    print("   • Enhanced Broadcast System")
-    print("   • Improved Payment Screenshot Handling")
-    print("   • Channel Verification Check")
-    print("=" * 50)
+    print("   • Multiple Channel Verification (4 Channels)")
+    print("   • Fixed Payment Screenshot Forwarding")
+    print("   • Fixed Broadcast for Large User Base")
+    print("   • Fixed Session Management")
+    print("   • Updated Credit Costs:")
+    print("     • Number: 2, Telegram: 5, Identity: 5")
+    print("     • IFSC: 3, Email: 20, Vehicle: 5")
+    print("     • Vehicle Owner: 10, PAN: 5")
+    print("=" * 60)
     
     # Start Flask keep_alive server
     keep_alive()
@@ -3879,7 +4347,7 @@ if __name__ == "__main__":
     print("✅ Daily 6 AM IST report scheduler started")
     
     print("✅ Bot is running! Press Ctrl+C to stop.")
-    print("=" * 50)
+    print("=" * 60)
     
     def signal_handler(sig, frame):
         print("\n🛑 Bot stopped by user")
