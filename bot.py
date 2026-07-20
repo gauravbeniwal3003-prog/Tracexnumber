@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 7.0.0 - New Features, Multiple Channel Verification, Updated Pricing
+Version: 7.0.1 - Fixed Message Edit Errors, Added New Features
 """
 
 import os
@@ -135,7 +135,7 @@ BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
 ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
-BOT_VERSION = "7.0.0"
+BOT_VERSION = "7.0.1"
 
 # Updated Lookup APIs
 LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/lookup?key=Pvttbott&number={number}"
@@ -230,7 +230,7 @@ user_cooldown = {}
 temp_data = {}
 payment_session_cooldown = {}
 PAYMENT_SESSION_COOLDOWN_SECONDS = 60
-active_sessions = {}
+active_sessions = set()
 active_sessions_lock = threading.Lock()
 proof_forwarded_txs = set()
 
@@ -503,7 +503,6 @@ def call_generic_lookup_api(url):
         # Try to parse as JSON first
         try:
             data = response.json()
-            # Check if there's an error field
             if isinstance(data, dict) and data.get('error'):
                 return {"error": data.get('error')}, None
             return data, None
@@ -640,7 +639,6 @@ def has_valid_number_results(result):
     if not isinstance(result, dict):
         return False
     
-    # Check if it's a JSON response with results
     if 'results' in result:
         api_results = result.get('results')
         if isinstance(api_results, dict):
@@ -648,11 +646,9 @@ def has_valid_number_results(result):
         if isinstance(api_results, list):
             return any(isinstance(v, dict) for v in api_results)
     
-    # Check for direct result fields
     if any(str(k).lower().startswith("result") and isinstance(v, dict) for k, v in result.items()):
         return True
     
-    # Check for common fields
     if 'name' in result and result['name']:
         return True
     if 'mobile' in result and result['mobile']:
@@ -697,6 +693,24 @@ def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, pars
             else:
                 sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, disable_web_page_preview=True))
     return sent_messages
+
+def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode="Markdown"):
+    """Safely edit a message, ignoring 'message is not modified' errors."""
+    try:
+        return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup, parse_mode=parse_mode, disable_web_page_preview=True)
+    except Exception as e:
+        if "message is not modified" in str(e):
+            # Message content is the same, ignore
+            return None
+        raise e
+
+def safe_send_message(chat_id, text, reply_markup=None, parse_mode="Markdown"):
+    """Safely send a message, with error handling."""
+    try:
+        return bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode, disable_web_page_preview=True)
+    except Exception as e:
+        print(f"Send message error: {e}")
+        return None
 
 def notify_admin_api_issue(lookup_type, query, error_reason):
     """Send compact admin-only debug alert."""
@@ -811,10 +825,8 @@ def process_telegram_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Telegram...*", parse_mode='Markdown')
     
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Telegram..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Telegram...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    # Simple delay with no edit to avoid errors
+    time.sleep(0.5)
     
     result, api_error_reason = call_telegram_lookup_api(username_input)
     
@@ -836,7 +848,7 @@ def process_telegram_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="telegram")
             notify_admin_api_issue("telegram_lookup", username_input, api_error_reason)
@@ -864,7 +876,7 @@ def process_telegram_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
         remove_active_session(user_id)
         return
@@ -886,15 +898,14 @@ You can also protect your Telegram ID for ₹99!
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🛡️ PROTECT MY TELEGRAM", callback_data="plan_protect_telegram"))
         markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, reply_markup=markup, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
         remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, TELEGRAM_LOOKUP_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
-                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
             remove_active_session(user_id)
             return
     
@@ -987,10 +998,7 @@ def process_pan_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching PAN Card records...*", parse_mode='Markdown')
     
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching PAN Card records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching PAN Card records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(0.5)
     
     result, api_error_reason = call_pan_lookup_api(pan_input)
     
@@ -1011,7 +1019,7 @@ def process_pan_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="pan")
             notify_admin_api_issue("pan_lookup", pan_input, api_error_reason)
@@ -1028,7 +1036,6 @@ def process_pan_lookup(message):
         elif 'result' in result:
             response_text = json.dumps(result['result'], indent=2)
         else:
-            # Try to pretty print the JSON
             try:
                 response_text = json.dumps(result, indent=2)
             except:
@@ -1050,15 +1057,14 @@ def process_pan_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, pan_input, found=False, lookup_type="pan", credits_used=0)
         remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, PAN_LOOKUP_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
-                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
             remove_active_session(user_id)
             return
     
@@ -1158,10 +1164,7 @@ def process_vehicle_owner_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Vehicle Owner records...*", parse_mode='Markdown')
     
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Vehicle Owner records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Vehicle Owner records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(0.5)
     
     result, api_error_reason = call_vehicle_owner_api(vehicle_input)
     
@@ -1182,7 +1185,7 @@ def process_vehicle_owner_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle_owner")
             notify_admin_api_issue("vehicle_owner_lookup", vehicle_input, api_error_reason)
@@ -1220,15 +1223,14 @@ def process_vehicle_owner_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle_owner", credits_used=0)
         remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, VEHICLE_OWNER_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
-                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
             remove_active_session(user_id)
             return
     
@@ -1328,10 +1330,7 @@ def process_vehicle_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Vehicle records...*", parse_mode='Markdown')
     
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Vehicle records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Vehicle records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(0.5)
     
     result, api_error_reason = call_vehicle_lookup_api(vehicle_input)
     
@@ -1352,7 +1351,7 @@ def process_vehicle_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle")
             notify_admin_api_issue("vehicle_lookup", vehicle_input, api_error_reason)
@@ -1390,15 +1389,14 @@ def process_vehicle_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle", credits_used=0)
         remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, VEHICLE_LOOKUP_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
-                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
             remove_active_session(user_id)
             return
     
@@ -1498,10 +1496,7 @@ def process_email_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Email records...*", parse_mode='Markdown')
     
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Email records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Email records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(0.5)
     
     result, api_error_reason = call_email_lookup_api(email_input)
     
@@ -1522,7 +1517,7 @@ def process_email_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="email")
             notify_admin_api_issue("email_lookup", email_input, api_error_reason)
@@ -1560,15 +1555,14 @@ def process_email_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, email_input, found=False, lookup_type="email", credits_used=0)
         remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, EMAIL_LOOKUP_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
-                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
             remove_active_session(user_id)
             return
     
@@ -1666,10 +1660,7 @@ def process_identity_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Identity records...*", parse_mode='Markdown')
     
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Identity records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching Identity records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(0.5)
     
     result, api_error_reason = call_identity_lookup_api(aadhar_input)
     
@@ -1690,7 +1681,7 @@ def process_identity_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="identity")
             notify_admin_api_issue("identity_lookup", aadhar_input, api_error_reason)
@@ -1713,15 +1704,14 @@ def process_identity_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, aadhar_input, found=False, lookup_type="identity", credits_used=0)
         remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, IDENTITY_LOOKUP_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
-                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
             remove_active_session(user_id)
             return
     
@@ -1819,10 +1809,7 @@ def process_ifsc_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching IFSC records...*", parse_mode='Markdown')
     
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching IFSC records..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching IFSC records...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(0.5)
     
     result, api_error_reason = call_ifsc_lookup_api(ifsc_input)
     
@@ -1843,7 +1830,7 @@ def process_ifsc_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-            bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="ifsc")
             notify_admin_api_issue("ifsc_lookup", ifsc_input, api_error_reason)
@@ -1866,15 +1853,14 @@ def process_ifsc_lookup(message):
 💎 Credits NOT deducted
 {footer()}
 """
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, ifsc_input, found=False, lookup_type="ifsc", credits_used=0)
         remove_active_session(user_id)
         return
     
     if not unlimited_active:
         if not deduct_credits(user_id, IFSC_LOOKUP_COST):
-            bot.edit_message_text("❌ *Failed to deduct credits. Please try again.*", 
-                                message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
             remove_active_session(user_id)
             return
     
@@ -2073,18 +2059,14 @@ You can also protect your number for ₹99!
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching...*", parse_mode='Markdown')
     
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching..*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
-    time.sleep(1)
-    bot.edit_message_text("🔍 *Searching...*", message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+    time.sleep(0.5)
     
     cached_result = get_cached_result(phone)
     
     if cached_result:
         if not unlimited_active:
             if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*", 
-                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
                 remove_active_session(user_id)
                 return
         
@@ -2118,8 +2100,7 @@ You can also protect your number for ₹99!
     if has_valid_number_results(result):
         if not unlimited_active:
             if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*", 
-                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
                 remove_active_session(user_id)
                 return
         
@@ -2143,8 +2124,7 @@ You can also protect your number for ₹99!
     else:
         if not unlimited_active:
             if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                bot.edit_message_text("❌ *Failed to deduct credit. Please try again.*",
-                                    message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+                safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
                 remove_active_session(user_id)
                 return
 
@@ -2170,7 +2150,7 @@ You can also protect your number for ₹99!
 {footer()}
 """
 
-        bot.edit_message_text(output, message.chat.id, loading_msg.message_id, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
 
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
         remove_active_session(user_id)
@@ -3130,7 +3110,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 7.0"
+    return "TraceX Bot Running - Version 7.0.1"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -3530,7 +3510,7 @@ def text_handler(message):
 *📦 CREDIT PACKS (1 Credit = ₹1)*
 • 40 Credits → ₹40  
 • 120 Credits → ₹120
-• 400 Credits → ₹100
+• 400 Credits → ₹400
 *🚀 UNLIMITED PLANS*
 • 1 Hour → ₹49
 • 1 Day → ₹99
@@ -4317,7 +4297,7 @@ if __name__ == "__main__":
     print(f"Admin ID: {ADMIN_ID}")
     print(f"Admin: {ADMIN_USERNAME}")
     print("=" * 60)
-    print("✅ New Features Added in v7.0:")
+    print("✅ New Features Added in v7.0.1:")
     print("   • PAN Card Lookup (5 Credits)")
     print("   • Vehicle to Owner Number (10 Credits)")
     print("   • Vehicle Lookup (5 Credits)")
@@ -4333,6 +4313,7 @@ if __name__ == "__main__":
     print("   • Fixed Payment Screenshot Forwarding")
     print("   • Fixed Broadcast for Large User Base")
     print("   • Fixed Session Management")
+    print("   • Fixed Message Edit Errors (v7.0.1)")
     print("   • Updated Credit Costs:")
     print("     • Number: 2, Telegram: 5, Identity: 5")
     print("     • IFSC: 3, Email: 20, Vehicle: 5")
