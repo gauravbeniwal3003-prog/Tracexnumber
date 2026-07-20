@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 7.0.1 - Fixed Message Edit Errors, Added New Features
+Version: 7.0.2 - Removed Developer Branding, Updated Website URL
 """
 
 import os
@@ -135,7 +135,7 @@ BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
 ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
-BOT_VERSION = "7.0.1"
+BOT_VERSION = "7.0.2"
 
 # Updated Lookup APIs
 LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/lookup?key=Pvttbott&number={number}"
@@ -170,7 +170,7 @@ REQUIRED_CHANNELS = [
 ]
 
 PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
-WEBSITE_URL = os.getenv("WEBSITE_URL", "https://tracexnumber.web.app")
+WEBSITE_URL = "https://tracexdata.online"
 
 # Updated Plan Configuration - 1 credit = ₹1
 PLAN_CONFIG = {
@@ -191,13 +191,16 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# Branding patterns to remove
+# Branding patterns to remove - Updated to remove developer branding
 BRANDING_PATTERNS = [
     r'💳 BUY API\s*:\s*@[a-zA-Z0-9_]+\s*',
     r'🆘 SUPPORT\s*:\s*@[a-zA-Z0-9_]+\s*',
     r'BUY API\s*:\s*@[a-zA-Z0-9_]+\s*',
     r'SUPPORT\s*:\s*@[a-zA-Z0-9_]+\s*',
-    r'"developer"\s*:\s*"@[^"]+"\s*,?'
+    r'developer["\s:]+@[a-zA-Z0-9_]+\s*',
+    r'developer["\s:]+@UsersXinfo_admin\s*',
+    r'@UsersXinfo_admin\s*',
+    r'UsersXinfo_admin\s*',
 ]
 
 GENERIC_API_ERROR_MESSAGE = "❌ *API Error*\n\n💎 Credits NOT deducted"
@@ -463,12 +466,17 @@ def telegram_lookup_protection_markup():
     return markup
 
 def remove_branding(text):
-    """Remove all branding patterns from API response text"""
+    """Remove all branding patterns from API response text including developer info"""
     if not text:
         return text
     result = text
     for pattern in BRANDING_PATTERNS:
         result = re.sub(pattern, '', result, flags=re.IGNORECASE)
+    # Remove any remaining developer references
+    result = re.sub(r'developer\s*[:=]\s*@[a-zA-Z0-9_]+\s*', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'developer\s*[:=]\s*[a-zA-Z0-9_]+\s*', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'@UsersXinfo_admin\s*', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'UsersXinfo_admin\s*', '', result, flags=re.IGNORECASE)
     result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
     result = result.strip()
     return result
@@ -501,12 +509,19 @@ def call_generic_lookup_api(url):
         if not content or len(content.strip()) < 5:
             return None, "empty_response"
         
+        # Remove branding from raw content
+        content = remove_branding(content)
+        
         # Try to parse as JSON first
         try:
             data = response.json()
-            if isinstance(data, dict) and data.get('error'):
-                return {"error": data.get('error')}, None
-            return data, None
+            if isinstance(data, dict):
+                # Remove developer field if present
+                if 'developer' in data:
+                    del data['developer']
+                if data.get('error'):
+                    return {"error": data.get('error')}, None
+                return data, None
         except:
             # If not JSON, treat as HTML/text response
             no_data_markers = [
@@ -613,6 +628,9 @@ def parse_telegram_html_response(html_content):
     """Parse HTML response from Telegram lookup API"""
     result = {}
     
+    # Clean the content first
+    html_content = remove_branding(html_content)
+    
     tg_id_match = re.search(r'🆔 Telegram ID:\s*<code>(\d+)</code>', html_content)
     if tg_id_match:
         result['telegram_id'] = tg_id_match.group(1)
@@ -639,6 +657,10 @@ def has_valid_number_results(result):
     """True only when API/cache has at least one usable number result."""
     if not isinstance(result, dict):
         return False
+    
+    # Remove developer field if present
+    if 'developer' in result:
+        del result['developer']
     
     if 'results' in result:
         api_results = result.get('results')
@@ -701,7 +723,6 @@ def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode="
         return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup, parse_mode=parse_mode, disable_web_page_preview=True)
     except Exception as e:
         if "message is not modified" in str(e):
-            # Message content is the same, ignore
             return None
         raise e
 
@@ -826,7 +847,6 @@ def process_telegram_lookup(message):
     user_cooldown[user_id] = time.time()
     loading_msg = bot.reply_to(message, "🔍 *Searching Telegram...*", parse_mode='Markdown')
     
-    # Simple delay with no edit to avoid errors
     time.sleep(0.5)
     
     result, api_error_reason = call_telegram_lookup_api(username_input)
@@ -857,6 +877,10 @@ def process_telegram_lookup(message):
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
         remove_active_session(user_id)
         return
+    
+    # Clean the result response
+    if isinstance(result, dict) and 'response' in result:
+        result['response'] = remove_branding(result['response'])
     
     parsed_result = parse_telegram_html_response(result.get("response", ""))
     
@@ -924,6 +948,9 @@ You can also protect your Telegram ID for ₹99!
 # ==================== PAN CARD LOOKUP ====================
 def format_pan_lookup_result(response_text, pan, user_id, unlimited_active=False, unlimited_expiry=None):
     """Format the PAN Card lookup result"""
+    # Clean the response text
+    response_text = remove_branding(response_text)
+    
     output = f"""
 📋 *PAN CARD LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1029,20 +1056,27 @@ def process_pan_lookup(message):
         remove_active_session(user_id)
         return
     
-    # Extract response text
+    # Extract response text and clean it
     response_text = ""
     if isinstance(result, dict):
+        # Remove developer field if present
+        if 'developer' in result:
+            del result['developer']
         if 'response' in result:
-            response_text = result['response']
+            response_text = remove_branding(result['response'])
         elif 'result' in result:
             response_text = json.dumps(result['result'], indent=2)
+            response_text = remove_branding(response_text)
         else:
             try:
                 response_text = json.dumps(result, indent=2)
+                response_text = remove_branding(response_text)
             except:
                 response_text = str(result)
+                response_text = remove_branding(response_text)
     else:
         response_text = str(result)
+        response_text = remove_branding(response_text)
     
     # Check for no data markers in the response
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
@@ -1088,6 +1122,8 @@ def process_pan_lookup(message):
 # ==================== VEHICLE OWNER LOOKUP ====================
 def format_vehicle_owner_result(response_text, vehicle, user_id, unlimited_active=False, unlimited_expiry=None):
     """Format the Vehicle to Owner Number lookup result"""
+    response_text = remove_branding(response_text)
+    
     output = f"""
 📱 *VEHICLE TO OWNER RESULT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1195,20 +1231,26 @@ def process_vehicle_owner_lookup(message):
         remove_active_session(user_id)
         return
     
-    # Extract response text
+    # Extract response text and clean it
     response_text = ""
     if isinstance(result, dict):
+        if 'developer' in result:
+            del result['developer']
         if 'response' in result:
-            response_text = result['response']
+            response_text = remove_branding(result['response'])
         elif 'result' in result:
             response_text = json.dumps(result['result'], indent=2)
+            response_text = remove_branding(response_text)
         else:
             try:
                 response_text = json.dumps(result, indent=2)
+                response_text = remove_branding(response_text)
             except:
                 response_text = str(result)
+                response_text = remove_branding(response_text)
     else:
         response_text = str(result)
+        response_text = remove_branding(response_text)
     
     # Check for no data markers
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
@@ -1254,6 +1296,8 @@ def process_vehicle_owner_lookup(message):
 # ==================== VEHICLE LOOKUP ====================
 def format_vehicle_lookup_result(response_text, vehicle, user_id, unlimited_active=False, unlimited_expiry=None):
     """Format the Vehicle lookup result"""
+    response_text = remove_branding(response_text)
+    
     output = f"""
 🚗 *VEHICLE LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1361,20 +1405,26 @@ def process_vehicle_lookup(message):
         remove_active_session(user_id)
         return
     
-    # Extract response text
+    # Extract response text and clean it
     response_text = ""
     if isinstance(result, dict):
+        if 'developer' in result:
+            del result['developer']
         if 'response' in result:
-            response_text = result['response']
+            response_text = remove_branding(result['response'])
         elif 'result' in result:
             response_text = json.dumps(result['result'], indent=2)
+            response_text = remove_branding(response_text)
         else:
             try:
                 response_text = json.dumps(result, indent=2)
+                response_text = remove_branding(response_text)
             except:
                 response_text = str(result)
+                response_text = remove_branding(response_text)
     else:
         response_text = str(result)
+        response_text = remove_branding(response_text)
     
     # Check for no data markers
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
@@ -1420,6 +1470,8 @@ def process_vehicle_lookup(message):
 # ==================== EMAIL LOOKUP ====================
 def format_email_lookup_result(response_text, email, user_id, unlimited_active=False, unlimited_expiry=None):
     """Format the Email lookup result"""
+    response_text = remove_branding(response_text)
+    
     output = f"""
 📧 *EMAIL LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1527,20 +1579,26 @@ def process_email_lookup(message):
         remove_active_session(user_id)
         return
     
-    # Extract response text
+    # Extract response text and clean it
     response_text = ""
     if isinstance(result, dict):
+        if 'developer' in result:
+            del result['developer']
         if 'response' in result:
-            response_text = result['response']
+            response_text = remove_branding(result['response'])
         elif 'result' in result:
             response_text = json.dumps(result['result'], indent=2)
+            response_text = remove_branding(response_text)
         else:
             try:
                 response_text = json.dumps(result, indent=2)
+                response_text = remove_branding(response_text)
             except:
                 response_text = str(result)
+                response_text = remove_branding(response_text)
     else:
         response_text = str(result)
+        response_text = remove_branding(response_text)
     
     # Check for no data markers
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
@@ -1586,6 +1644,8 @@ def process_email_lookup(message):
 # ==================== IDENTITY LOOKUP ====================
 def format_identity_lookup_result(response_text, query, user_id, unlimited_active=False, unlimited_expiry=None):
     """Format the Identity lookup result"""
+    response_text = remove_branding(response_text)
+    
     output = f"""
 🆔 *IDENTITY LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1692,6 +1752,7 @@ def process_identity_lookup(message):
         return
     
     response_text = result.get("response", "")
+    response_text = remove_branding(response_text)
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid"]
     if any(marker in response_text.lower() for marker in no_data_markers):
         output = f"""
@@ -1735,6 +1796,8 @@ def process_identity_lookup(message):
 # ==================== IFSC LOOKUP ====================
 def format_ifsc_lookup_result(response_text, query, user_id, unlimited_active=False, unlimited_expiry=None):
     """Format the IFSC lookup result"""
+    response_text = remove_branding(response_text)
+    
     output = f"""
 🏦 *IFSC LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1841,6 +1904,7 @@ def process_ifsc_lookup(message):
         return
     
     response_text = result.get("response", "")
+    response_text = remove_branding(response_text)
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "not available"]
     if any(marker in response_text.lower() for marker in no_data_markers):
         output = f"""
@@ -3111,7 +3175,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 7.0.1"
+    return "TraceX Bot Running - Version 7.0.2"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -3201,9 +3265,7 @@ def show_bot_booking(message):
 💰 *Bot setup add-on:* ₹399
 📆 *API charges:* Monthly, separate as per API provider
 🔧 *Future updates:* ₹399 per update/change
-⏰ *Delivery:* 24–48 hours after payment + clear requirements
-
-✅ You can book bots for legal/public-data workflows, automation, payment system, admin panel, website+bot integration, alerts, reports, and similar tools.
+⏰ *Delivery:* 24–48 hours after payment + clear requirements✅ You can book bots for legal/public-data workflows, automation, payment system, admin panel, website+bot integration, alerts, reports, and similar tools.
 
 ⚠️ I will not build bots meant for private personal-data lookup, Aadhaar/PAN misuse, doxxing, or unauthorized data access.
 
@@ -4298,7 +4360,7 @@ if __name__ == "__main__":
     print(f"Admin ID: {ADMIN_ID}")
     print(f"Admin: {ADMIN_USERNAME}")
     print("=" * 60)
-    print("✅ New Features Added in v7.0.1:")
+    print("✅ New Features Added in v7.0.2:")
     print("   • PAN Card Lookup (5 Credits)")
     print("   • Vehicle to Owner Number (10 Credits)")
     print("   • Vehicle Lookup (5 Credits)")
@@ -4314,7 +4376,9 @@ if __name__ == "__main__":
     print("   • Fixed Payment Screenshot Forwarding")
     print("   • Fixed Broadcast for Large User Base")
     print("   • Fixed Session Management")
-    print("   • Fixed Message Edit Errors (v7.0.1)")
+    print("   • Fixed Message Edit Errors")
+    print("   • Removed 'developer' branding from all responses")
+    print("   • Updated Website URL to tracexdata.online")
     print("   • Updated Credit Costs:")
     print("     • Number: 2, Telegram: 5, Identity: 5")
     print("     • IFSC: 3, Email: 20, Vehicle: 5")
