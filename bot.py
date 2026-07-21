@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 7.0.2 - Removed Developer Branding, Updated Website URL
+Version: 8.0.0 - Dynamic Response Formatter
 """
 
 import os
@@ -135,7 +135,7 @@ BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
 ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
-BOT_VERSION = "7.0.2"
+BOT_VERSION = "8.0.0"
 
 # Updated Lookup APIs
 LOOKUP_API_URL = "https://tracexdata-api.onrender.com/api/lookup?key=Pvttbott&number={number}"
@@ -244,6 +244,413 @@ daily_stats_lock = threading.Lock()
 IST = timezone(timedelta(hours=5, minutes=30))
 
 MAINTENANCE_MODE = False
+
+# ==================== DYNAMIC RESPONSE FORMATTER ====================
+class DynamicResponseFormatter:
+    """
+    A generic JSON response formatter that automatically adapts to any API response
+    structure. No hardcoded field names - everything is derived from the response.
+    """
+    
+    # Words to capitalize in labels
+    _CAPITALIZE_WORDS = {'id', 'ip', 'url', 'api', 'http', 'https', 'sms', 'email', 
+                         'pan', 'aadhar', 'ifsc', 'gst', 'uid', 'otp', 'pin', 'zip'}
+    
+    # Keys to skip (common metadata/technical fields)
+    _SKIP_KEYS = {'_id', '__v', 'id', 'created_at', 'updated_at', 'deleted_at', 
+                  'version', 'timestamp', 'status_code', 'raw', 'metadata', 'trace'}
+    
+    # Keys that indicate a result wrapper
+    _RESULT_WRAPPER_KEYS = {'results', 'data', 'result', 'items', 'records', 
+                            'response', 'output', 'payload'}
+    
+    def __init__(self, max_results: int = 20, indent_spaces: int = 2):
+        """
+        Initialize the formatter.
+        
+        Args:
+            max_results: Maximum number of items to display from arrays
+            indent_spaces: Number of spaces for nested indentation
+        """
+        self.max_results = max_results
+        self.indent_spaces = indent_spaces
+        
+    def format(self, response_data: Any, query: str = "", lookup_type: str = "") -> str:
+        """
+        Format any API response into a clean, readable Telegram message.
+        
+        Args:
+            response_data: The API response (dict, list, or primitive)
+            query: The original query/identifier
+            lookup_type: Type of lookup for header
+            
+        Returns:
+            Formatted string for Telegram
+        """
+        # Handle None or empty response
+        if response_data is None:
+            return self._format_no_data(query, "No response received from server")
+            
+        # Handle primitive responses
+        if not isinstance(response_data, (dict, list)):
+            return self._format_primitive(response_data, query)
+            
+        # If it's a list, format as multiple results
+        if isinstance(response_data, list):
+            return self._format_list(response_data, query, lookup_type)
+            
+        # It's a dict - unwrap if it's a wrapper
+        unwrapped = self._unwrap_response(response_data)
+        
+        # Check if there's meaningful data
+        if not self._has_meaningful_data(unwrapped):
+            return self._format_no_data(query)
+            
+        # Format the response
+        return self._format_dict(unwrapped, query, lookup_type)
+    
+    def _unwrap_response(self, data: Dict) -> Dict:
+        """
+        Unwrap common result wrapper keys like 'results', 'data', etc.
+        
+        If the dict has a single key that points to the actual data, use that.
+        """
+        if not isinstance(data, dict):
+            return data
+            
+        # Check if this is a wrapper with a single meaningful key
+        keys = list(data.keys())
+        if len(keys) == 1 and keys[0].lower() in self._RESULT_WRAPPER_KEYS:
+            inner = data[keys[0]]
+            # Only unwrap if inner is a dict or list (has actual data)
+            if isinstance(inner, (dict, list)) and self._has_meaningful_data(inner):
+                return inner
+                
+        return data
+    
+    def _has_meaningful_data(self, data: Any) -> bool:
+        """Check if the data contains meaningful information."""
+        if data is None:
+            return False
+        if isinstance(data, dict):
+            if not data:
+                return False
+            # Check if all values are empty
+            return any(self._has_meaningful_data(v) for v in data.values())
+        if isinstance(data, list):
+            if not data:
+                return False
+            return any(self._has_meaningful_data(item) for item in data)
+        if isinstance(data, str):
+            return bool(data.strip()) and data.lower() not in ('null', 'none', 'n/a', 'na', '-', '')
+        return True
+    
+    def _format_no_data(self, query: str = "", custom_msg: str = "") -> str:
+        """Format a 'no data found' message."""
+        parts = [
+            "❌ *NO DATA FOUND*",
+            "━━━━━━━━━━━━━━━━━━"
+        ]
+        if query:
+            parts.append(f"🔍 Query: `{query}`")
+        parts.append("")
+        if custom_msg:
+            parts.append(custom_msg)
+        else:
+            parts.append("🚫 No records available in database")
+            parts.append("")
+            parts.append("💡 Tips:")
+            parts.append("• Check your query again")
+            parts.append("• Try a different value")
+            parts.append("• Ensure the format is correct")
+        return "\n".join(parts)
+    
+    def _format_primitive(self, value: Any, query: str = "") -> str:
+        """Format a primitive response (string, number, boolean)."""
+        parts = [
+            "🔍 *LOOKUP RESULT*",
+            "━━━━━━━━━━━━━━━━━━"
+        ]
+        if query:
+            parts.append(f"🔍 Query: `{query}`")
+        parts.append("")
+        if isinstance(value, bool):
+            parts.append(f"📊 Result: `{value}`")
+        else:
+            parts.append(f"📊 Result: `{value}`")
+        return "\n".join(parts)
+    
+    def _format_list(self, items: List, query: str = "", lookup_type: str = "") -> str:
+        """
+        Format a list of items (array response).
+        Each item is formatted as a separate result.
+        """
+        if not items:
+            return self._format_no_data(query)
+            
+        # Limit the number of results shown
+        total = len(items)
+        items_to_show = items[:self.max_results]
+        showing = f"\n📌 Showing: `{len(items_to_show)}` / `{total}`" if total > self.max_results else ""
+        
+        # Get header based on lookup type
+        header_parts = self._get_header_parts(lookup_type)
+        header_parts.append(f"📊 Total Results Found: `{total}`{showing}")
+        header_parts.append("")
+        
+        parts = header_parts
+        
+        for idx, item in enumerate(items_to_show, 1):
+            if isinstance(item, dict):
+                parts.append(f"📄 *RESULT {idx}*")
+                parts.append("")
+                # Format each dict with proper indentation
+                parts.append(self._format_dict_content(item, indent=0))
+                parts.append("")
+            else:
+                parts.append(f"📄 *RESULT {idx}*")
+                parts.append(f"`{item}`")
+                parts.append("")
+                
+        # Remove trailing whitespace
+        return "\n".join(parts).strip()
+    
+    def _get_header_parts(self, lookup_type: str) -> List[str]:
+        """Get header parts based on lookup type."""
+        type_emoji = {
+            'number': '📱',
+            'telegram': '💬',
+            'identity': '🆔',
+            'ifsc': '🏦',
+            'pan': '📋',
+            'vehicle': '🚗',
+            'vehicle_owner': '📱',
+            'email': '📧'
+        }.get(lookup_type, '🔍')
+        
+        if lookup_type:
+            return [
+                f"{type_emoji} *{lookup_type.upper()} LOOKUP RESULT*",
+                "━━━━━━━━━━━━━━━━━━"
+            ]
+        return [
+            "🔍 *LOOKUP RESULT*",
+            "━━━━━━━━━━━━━━━━━━"
+        ]
+    
+    def _format_dict(self, data: Dict, query: str = "", lookup_type: str = "") -> str:
+        """
+        Format a dictionary response with a header.
+        """
+        parts = self._get_header_parts(lookup_type)
+        
+        if query:
+            parts.append(f"🔍 Query: `{query}`")
+            parts.append("━━━━━━━━━━━━━━━━━━")
+            
+        # Format the actual content
+        content = self._format_dict_content(data, indent=0)
+        if content:
+            parts.append(content)
+            
+        return "\n".join(parts).strip()
+    
+    def _format_dict_content(self, data: Dict, indent: int = 0, prefix: str = "") -> str:
+        """
+        Recursively format dictionary content with proper indentation and labels.
+        
+        Args:
+            data: The dictionary to format
+            indent: Current indentation level
+            prefix: Prefix for keys (used for nested structures)
+            
+        Returns:
+            Formatted string
+        """
+        if not data:
+            return "📭 *No data available*"
+            
+        lines = []
+        indent_str = "  " * indent
+        
+        # Process each key in order (preserve original order)
+        for key, value in data.items():
+            # Skip technical/skip keys
+            if key in self._SKIP_KEYS:
+                continue
+                
+            # Skip empty/null values
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+                
+            # Skip if value is empty list/dict
+            if isinstance(value, list) and not value:
+                continue
+            if isinstance(value, dict) and not value:
+                continue
+                
+            # Generate human-readable label
+            label = self._format_label(key)
+            
+            # Handle different value types
+            if isinstance(value, dict):
+                # Nested object - show with expanded view
+                nested_content = self._format_dict_content(value, indent + 1)
+                if nested_content:
+                    lines.append(f"{indent_str}📂 *{label}*")
+                    lines.append(nested_content)
+                else:
+                    lines.append(f"{indent_str}📂 *{label}*: `N/A`")
+                    
+            elif isinstance(value, list):
+                # List - show as numbered items if they contain dicts
+                if value and isinstance(value[0], dict):
+                    lines.append(f"{indent_str}📂 *{label}*")
+                    for idx, item in enumerate(value[:self.max_results], 1):
+                        if isinstance(item, dict):
+                            nested_content = self._format_dict_content(item, indent + 2, prefix=f"#{idx} ")
+                            if nested_content:
+                                lines.append(f"{indent_str}  ─── #{idx} ───")
+                                lines.append(nested_content)
+                        else:
+                            lines.append(f"{indent_str}  • `{self._format_value(item)}`")
+                    if len(value) > self.max_results:
+                        lines.append(f"{indent_str}  ... and {len(value) - self.max_results} more")
+                else:
+                    # Simple list
+                    items = [str(v) for v in value[:self.max_results] if v is not None]
+                    if items:
+                        display = ", ".join(items[:5])
+                        if len(items) > 5:
+                            display += f", ... ({len(items)} total)"
+                        lines.append(f"{indent_str}📋 *{label}*: `{display}`")
+                    else:
+                        lines.append(f"{indent_str}📋 *{label}*: `N/A`")
+                        
+            else:
+                # Primitive value
+                formatted_value = self._format_value(value)
+                lines.append(f"{indent_str}• *{label}*: `{formatted_value}`")
+                
+        return "\n".join(lines)
+    
+    def _format_label(self, key: str) -> str:
+        """
+        Convert a key to a human-readable label.
+        
+        Examples:
+            full_name -> Full Name
+            telephoneNumber -> Telephone Number
+            user_id -> User ID
+            mobileNo -> Mobile No
+        """
+        # Handle common abbreviations
+        label = key
+        
+        # Replace underscores with spaces
+        label = label.replace('_', ' ')
+        label = label.replace('-', ' ')
+        
+        # Split camelCase
+        label = re.sub(r'(?<=[a-z])(?=[A-Z])', r' ', label)
+        
+        # Handle consecutive uppercase letters (abbreviations)
+        label = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', label)
+        
+        # Capitalize each word
+        words = []
+        for word in label.split():
+            if word.lower() in self._CAPITALIZE_WORDS:
+                words.append(word.upper())
+            else:
+                words.append(word.capitalize())
+                
+        return ' '.join(words)
+    
+    def _format_value(self, value: Any) -> str:
+        """
+        Format a value for display.
+        """
+        if value is None:
+            return 'N/A'
+        if isinstance(value, bool):
+            return '✅ Yes' if value else '❌ No'
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str):
+            if not value.strip():
+                return 'N/A'
+            # Truncate very long strings
+            if len(value) > 1000:
+                return value[:1000] + '...'
+            return value
+        if isinstance(value, dict):
+            return json.dumps(value, indent=None, ensure_ascii=False)
+        if isinstance(value, list):
+            return f"[{len(value)} items]"
+        return str(value)
+
+
+def format_api_response_dynamic(
+    response_data: Any,
+    query: str = "",
+    lookup_type: str = "",
+    credits_used: int = 0,
+    credits_left: int = 0,
+    total_searches: int = 0,
+    unlimited_active: bool = False,
+    unlimited_expiry: str = None,
+    footer: str = "",
+    custom_header: str = ""
+) -> str:
+    """
+    Format any API response dynamically without hardcoded fields.
+    
+    This function replaces all the hardcoded format_*_lookup_result functions.
+    
+    Args:
+        response_data: The API response (dict, list, or primitive)
+        query: The original query/identifier
+        lookup_type: Type of lookup (number, telegram, pan, etc.)
+        credits_used: Credits deducted for this search
+        credits_left: Remaining credits
+        total_searches: Total searches by user
+        unlimited_active: Whether unlimited plan is active
+        unlimited_expiry: Expiry of unlimited plan
+        footer: Footer text to append
+        custom_header: Optional custom header override
+    
+    Returns:
+        Formatted response for Telegram
+    """
+    formatter = DynamicResponseFormatter(max_results=20)
+    
+    # Format the main content
+    content = formatter.format(response_data, query, lookup_type)
+    
+    # Add credit information if provided
+    if credits_used > 0 or unlimited_active:
+        credit_section = []
+        credit_section.append("")
+        credit_section.append("━━━━━━━━━━━━━━━━━━")
+        
+        if unlimited_active:
+            credit_section.append("🚀 *UNLIMITED PLAN ACTIVE*")
+            credit_section.append("No credits deducted!")
+            if unlimited_expiry:
+                credit_section.append(f"Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`")
+        else:
+            credit_section.append(f"💎 *Credits Used:* `{credits_used}`")
+            credit_section.append(f"💎 *Credits Left:* `{credits_left}`")
+            credit_section.append(f"🔎 *Total Searches:* `{total_searches}`")
+            
+        content += "\n" + "\n".join(credit_section)
+    
+    # Add footer
+    if footer:
+        content += f"\n\n{footer}"
+    
+    return content
 
 # ==================== MAIN MENU KEYBOARD ====================
 def get_main_keyboard():
@@ -494,7 +901,7 @@ def call_generic_lookup_api(url):
         print(f"[API CALL] {url}")
         
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/7.0",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/8.0",
             "Accept": "application/json,text/html,text/plain,*/*",
             "Connection": "close",
         }
@@ -761,46 +1168,8 @@ def remove_active_session(user_id):
         active_sessions.discard(user_id)
 
 # ==================== TELEGRAM LOOKUP FUNCTIONS ====================
-def format_telegram_lookup_result(result, username, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Telegram lookup result for display - filtered to remove branding"""
-    output = f"""
-🔍 *TELEGRAM LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Lookup Result for: `{username}`
-────────────────────────
-
-👥 Username: `{result.get('username', username)}`
-🆔 Telegram ID: `{result.get('telegram_id', 'N/A')}`
-📱 Phone Number: `{result.get('phone_number', 'N/A')}`
-🌍 Country: `{result.get('country', 'N/A')}`
-📞 Country Code: `{result.get('country_code', 'N/A')}`
-
-────────────────────────
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{TELEGRAM_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_telegram_lookup(message):
-    """Process Telegram username lookup"""
+    """Process Telegram username lookup using dynamic formatter"""
     user_id = message.from_user.id
     username_input = str(message.text or "").strip()
 
@@ -853,23 +1222,18 @@ def process_telegram_lookup(message):
     
     if not result or result.get("error") == "no_result":
         if result and result.get("error") == "no_result":
-            output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🔍 Username: `{username_clean}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check username again
-• Try another username
-• Ensure username is correct
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            formatted_response = format_api_response_dynamic(
+                response_data=result,
+                query=username_clean,
+                lookup_type="telegram",
+                credits_used=0,
+                credits_left=total_credits,
+                total_searches=user.get('total_searches', 0) if user else 0,
+                unlimited_active=unlimited_active,
+                unlimited_expiry=unlimited_expiry,
+                footer=footer()
+            )
+            safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="telegram")
             notify_admin_api_issue("telegram_lookup", username_input, api_error_reason)
@@ -885,23 +1249,18 @@ def process_telegram_lookup(message):
     parsed_result = parse_telegram_html_response(result.get("response", ""))
     
     if not parsed_result.get('telegram_id') and not parsed_result.get('phone_number'):
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🔍 Username: `{username_clean}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check username again
-• Try another username
-• Ensure username is correct
-
-💎 Credits NOT deducted
-{footer()}
-"""
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+        formatted_response = format_api_response_dynamic(
+            response_data={"error": "no_result"},
+            query=username_clean,
+            lookup_type="telegram",
+            credits_used=0,
+            credits_left=total_credits,
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
+        safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
         remove_active_session(user_id)
         return
@@ -936,54 +1295,29 @@ You can also protect your Telegram ID for ₹99!
     
     increment_total_searches(user_id)
     
-    output = format_telegram_lookup_result(parsed_result, username_clean, user_id, unlimited_active, unlimited_expiry)
-    markup = telegram_lookup_protection_markup()
+    # Format using dynamic formatter
+    formatted_response = format_api_response_dynamic(
+        response_data=parsed_result,
+        query=username_clean,
+        lookup_type="telegram",
+        credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0,
+        credits_left=get_total_credits(user_id),
+        total_searches=user.get('total_searches', 0) if user else 0,
+        unlimited_active=unlimited_active,
+        unlimited_expiry=unlimited_expiry,
+        footer=footer()
+    )
     
-    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    markup = telegram_lookup_protection_markup()
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=True, lookup_type="telegram", credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0)
     
     remove_active_session(user_id)
 
 # ==================== PAN CARD LOOKUP ====================
-def format_pan_lookup_result(response_text, pan, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the PAN Card lookup result"""
-    # Clean the response text
-    response_text = remove_branding(response_text)
-    
-    output = f"""
-📋 *PAN CARD LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-PAN Card: `{pan.upper()}`
-
-{response_text}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{PAN_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_pan_lookup(message):
-    """Process PAN Card lookup"""
+    """Process PAN Card lookup using dynamic formatter"""
     user_id = message.from_user.id
     pan_input = str(message.text or "").strip().upper()
 
@@ -1032,22 +1366,18 @@ def process_pan_lookup(message):
     
     if not result or result.get("error") == "no_result":
         if result and result.get("error") == "no_result":
-            output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-📋 PAN: `{pan_input}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check PAN number again
-• Try another PAN number
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            formatted_response = format_api_response_dynamic(
+                response_data=result,
+                query=pan_input,
+                lookup_type="pan",
+                credits_used=0,
+                credits_left=total_credits,
+                total_searches=user.get('total_searches', 0) if user else 0,
+                unlimited_active=unlimited_active,
+                unlimited_expiry=unlimited_expiry,
+                footer=footer()
+            )
+            safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="pan")
             notify_admin_api_issue("pan_lookup", pan_input, api_error_reason)
@@ -1057,42 +1387,36 @@ def process_pan_lookup(message):
         return
     
     # Extract response text and clean it
-    response_text = ""
+    response_data = {}
     if isinstance(result, dict):
         # Remove developer field if present
         if 'developer' in result:
             del result['developer']
         if 'response' in result:
-            response_text = remove_branding(result['response'])
+            response_data = {'response': remove_branding(result['response'])}
         elif 'result' in result:
-            response_text = json.dumps(result['result'], indent=2)
-            response_text = remove_branding(response_text)
+            response_data = {'result': remove_branding(json.dumps(result['result'], indent=2))}
         else:
-            try:
-                response_text = json.dumps(result, indent=2)
-                response_text = remove_branding(response_text)
-            except:
-                response_text = str(result)
-                response_text = remove_branding(response_text)
+            response_data = {k: v for k, v in result.items() if k not in ['developer']}
     else:
-        response_text = str(result)
-        response_text = remove_branding(response_text)
+        response_data = {'response': remove_branding(str(result))}
     
     # Check for no data markers in the response
+    response_str = json.dumps(response_data).lower()
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
-    if any(marker in response_text.lower() for marker in no_data_markers):
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-📋 PAN: `{pan_input}`
-
-🚫 No records available in database
-
-💎 Credits NOT deducted
-{footer()}
-"""
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+    if any(marker in response_str for marker in no_data_markers):
+        formatted_response = format_api_response_dynamic(
+            response_data={"error": "no_result"},
+            query=pan_input,
+            lookup_type="pan",
+            credits_used=0,
+            credits_left=total_credits,
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
+        safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, pan_input, found=False, lookup_type="pan", credits_used=0)
         remove_active_session(user_id)
         return
@@ -1105,7 +1429,17 @@ def process_pan_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_pan_lookup_result(response_text, pan_input, user_id, unlimited_active, unlimited_expiry)
+    formatted_response = format_api_response_dynamic(
+        response_data=response_data,
+        query=pan_input,
+        lookup_type="pan",
+        credits_used=PAN_LOOKUP_COST if not unlimited_active else 0,
+        credits_left=get_total_credits(user_id),
+        total_searches=user.get('total_searches', 0) if user else 0,
+        unlimited_active=unlimited_active,
+        unlimited_expiry=unlimited_expiry,
+        footer=footer()
+    )
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1113,50 +1447,15 @@ def process_pan_lookup(message):
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, pan_input, found=True, lookup_type="pan", credits_used=PAN_LOOKUP_COST if not unlimited_active else 0)
     
     remove_active_session(user_id)
 
 # ==================== VEHICLE OWNER LOOKUP ====================
-def format_vehicle_owner_result(response_text, vehicle, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Vehicle to Owner Number lookup result"""
-    response_text = remove_branding(response_text)
-    
-    output = f"""
-📱 *VEHICLE TO OWNER RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Vehicle Number: `{vehicle.upper()}`
-
-{response_text}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{VEHICLE_OWNER_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_vehicle_owner_lookup(message):
-    """Process Vehicle to Owner Number lookup"""
+    """Process Vehicle to Owner Number lookup using dynamic formatter"""
     user_id = message.from_user.id
     vehicle_input = str(message.text or "").strip().upper()
 
@@ -1207,22 +1506,18 @@ def process_vehicle_owner_lookup(message):
     
     if not result or result.get("error") == "no_result":
         if result and result.get("error") == "no_result":
-            output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🚗 Vehicle: `{vehicle_input}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check vehicle number again
-• Try another vehicle number
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            formatted_response = format_api_response_dynamic(
+                response_data=result,
+                query=vehicle_input,
+                lookup_type="vehicle_owner",
+                credits_used=0,
+                credits_left=total_credits,
+                total_searches=user.get('total_searches', 0) if user else 0,
+                unlimited_active=unlimited_active,
+                unlimited_expiry=unlimited_expiry,
+                footer=footer()
+            )
+            safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle_owner")
             notify_admin_api_issue("vehicle_owner_lookup", vehicle_input, api_error_reason)
@@ -1232,41 +1527,35 @@ def process_vehicle_owner_lookup(message):
         return
     
     # Extract response text and clean it
-    response_text = ""
+    response_data = {}
     if isinstance(result, dict):
         if 'developer' in result:
             del result['developer']
         if 'response' in result:
-            response_text = remove_branding(result['response'])
+            response_data = {'response': remove_branding(result['response'])}
         elif 'result' in result:
-            response_text = json.dumps(result['result'], indent=2)
-            response_text = remove_branding(response_text)
+            response_data = {'result': remove_branding(json.dumps(result['result'], indent=2))}
         else:
-            try:
-                response_text = json.dumps(result, indent=2)
-                response_text = remove_branding(response_text)
-            except:
-                response_text = str(result)
-                response_text = remove_branding(response_text)
+            response_data = {k: v for k, v in result.items() if k not in ['developer']}
     else:
-        response_text = str(result)
-        response_text = remove_branding(response_text)
+        response_data = {'response': remove_branding(str(result))}
     
     # Check for no data markers
+    response_str = json.dumps(response_data).lower()
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
-    if any(marker in response_text.lower() for marker in no_data_markers):
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🚗 Vehicle: `{vehicle_input}`
-
-🚫 No records available in database
-
-💎 Credits NOT deducted
-{footer()}
-"""
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+    if any(marker in response_str for marker in no_data_markers):
+        formatted_response = format_api_response_dynamic(
+            response_data={"error": "no_result"},
+            query=vehicle_input,
+            lookup_type="vehicle_owner",
+            credits_used=0,
+            credits_left=total_credits,
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
+        safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle_owner", credits_used=0)
         remove_active_session(user_id)
         return
@@ -1279,7 +1568,17 @@ def process_vehicle_owner_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_vehicle_owner_result(response_text, vehicle_input, user_id, unlimited_active, unlimited_expiry)
+    formatted_response = format_api_response_dynamic(
+        response_data=response_data,
+        query=vehicle_input,
+        lookup_type="vehicle_owner",
+        credits_used=VEHICLE_OWNER_COST if not unlimited_active else 0,
+        credits_left=get_total_credits(user_id),
+        total_searches=user.get('total_searches', 0) if user else 0,
+        unlimited_active=unlimited_active,
+        unlimited_expiry=unlimited_expiry,
+        footer=footer()
+    )
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1287,50 +1586,15 @@ def process_vehicle_owner_lookup(message):
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=True, lookup_type="vehicle_owner", credits_used=VEHICLE_OWNER_COST if not unlimited_active else 0)
     
     remove_active_session(user_id)
 
 # ==================== VEHICLE LOOKUP ====================
-def format_vehicle_lookup_result(response_text, vehicle, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Vehicle lookup result"""
-    response_text = remove_branding(response_text)
-    
-    output = f"""
-🚗 *VEHICLE LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Vehicle Number: `{vehicle.upper()}`
-
-{response_text}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{VEHICLE_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_vehicle_lookup(message):
-    """Process Vehicle lookup"""
+    """Process Vehicle lookup using dynamic formatter"""
     user_id = message.from_user.id
     vehicle_input = str(message.text or "").strip().upper()
 
@@ -1381,22 +1645,18 @@ def process_vehicle_lookup(message):
     
     if not result or result.get("error") == "no_result":
         if result and result.get("error") == "no_result":
-            output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🚗 Vehicle: `{vehicle_input}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check vehicle number again
-• Try another vehicle number
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            formatted_response = format_api_response_dynamic(
+                response_data=result,
+                query=vehicle_input,
+                lookup_type="vehicle",
+                credits_used=0,
+                credits_left=total_credits,
+                total_searches=user.get('total_searches', 0) if user else 0,
+                unlimited_active=unlimited_active,
+                unlimited_expiry=unlimited_expiry,
+                footer=footer()
+            )
+            safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="vehicle")
             notify_admin_api_issue("vehicle_lookup", vehicle_input, api_error_reason)
@@ -1406,41 +1666,35 @@ def process_vehicle_lookup(message):
         return
     
     # Extract response text and clean it
-    response_text = ""
+    response_data = {}
     if isinstance(result, dict):
         if 'developer' in result:
             del result['developer']
         if 'response' in result:
-            response_text = remove_branding(result['response'])
+            response_data = {'response': remove_branding(result['response'])}
         elif 'result' in result:
-            response_text = json.dumps(result['result'], indent=2)
-            response_text = remove_branding(response_text)
+            response_data = {'result': remove_branding(json.dumps(result['result'], indent=2))}
         else:
-            try:
-                response_text = json.dumps(result, indent=2)
-                response_text = remove_branding(response_text)
-            except:
-                response_text = str(result)
-                response_text = remove_branding(response_text)
+            response_data = {k: v for k, v in result.items() if k not in ['developer']}
     else:
-        response_text = str(result)
-        response_text = remove_branding(response_text)
+        response_data = {'response': remove_branding(str(result))}
     
     # Check for no data markers
+    response_str = json.dumps(response_data).lower()
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
-    if any(marker in response_text.lower() for marker in no_data_markers):
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🚗 Vehicle: `{vehicle_input}`
-
-🚫 No records available in database
-
-💎 Credits NOT deducted
-{footer()}
-"""
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+    if any(marker in response_str for marker in no_data_markers):
+        formatted_response = format_api_response_dynamic(
+            response_data={"error": "no_result"},
+            query=vehicle_input,
+            lookup_type="vehicle",
+            credits_used=0,
+            credits_left=total_credits,
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
+        safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=False, lookup_type="vehicle", credits_used=0)
         remove_active_session(user_id)
         return
@@ -1453,7 +1707,17 @@ def process_vehicle_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_vehicle_lookup_result(response_text, vehicle_input, user_id, unlimited_active, unlimited_expiry)
+    formatted_response = format_api_response_dynamic(
+        response_data=response_data,
+        query=vehicle_input,
+        lookup_type="vehicle",
+        credits_used=VEHICLE_LOOKUP_COST if not unlimited_active else 0,
+        credits_left=get_total_credits(user_id),
+        total_searches=user.get('total_searches', 0) if user else 0,
+        unlimited_active=unlimited_active,
+        unlimited_expiry=unlimited_expiry,
+        footer=footer()
+    )
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1461,50 +1725,15 @@ def process_vehicle_lookup(message):
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, vehicle_input, found=True, lookup_type="vehicle", credits_used=VEHICLE_LOOKUP_COST if not unlimited_active else 0)
     
     remove_active_session(user_id)
 
 # ==================== EMAIL LOOKUP ====================
-def format_email_lookup_result(response_text, email, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Email lookup result"""
-    response_text = remove_branding(response_text)
-    
-    output = f"""
-📧 *EMAIL LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Email: `{email}`
-
-{response_text}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{EMAIL_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_email_lookup(message):
-    """Process Email lookup"""
+    """Process Email lookup using dynamic formatter"""
     user_id = message.from_user.id
     email_input = str(message.text or "").strip().lower()
 
@@ -1555,22 +1784,18 @@ def process_email_lookup(message):
     
     if not result or result.get("error") == "no_result":
         if result and result.get("error") == "no_result":
-            output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-📧 Email: `{email_input}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check email address again
-• Try another email address
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            formatted_response = format_api_response_dynamic(
+                response_data=result,
+                query=email_input,
+                lookup_type="email",
+                credits_used=0,
+                credits_left=total_credits,
+                total_searches=user.get('total_searches', 0) if user else 0,
+                unlimited_active=unlimited_active,
+                unlimited_expiry=unlimited_expiry,
+                footer=footer()
+            )
+            safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="email")
             notify_admin_api_issue("email_lookup", email_input, api_error_reason)
@@ -1580,41 +1805,35 @@ def process_email_lookup(message):
         return
     
     # Extract response text and clean it
-    response_text = ""
+    response_data = {}
     if isinstance(result, dict):
         if 'developer' in result:
             del result['developer']
         if 'response' in result:
-            response_text = remove_branding(result['response'])
+            response_data = {'response': remove_branding(result['response'])}
         elif 'result' in result:
-            response_text = json.dumps(result['result'], indent=2)
-            response_text = remove_branding(response_text)
+            response_data = {'result': remove_branding(json.dumps(result['result'], indent=2))}
         else:
-            try:
-                response_text = json.dumps(result, indent=2)
-                response_text = remove_branding(response_text)
-            except:
-                response_text = str(result)
-                response_text = remove_branding(response_text)
+            response_data = {k: v for k, v in result.items() if k not in ['developer']}
     else:
-        response_text = str(result)
-        response_text = remove_branding(response_text)
+        response_data = {'response': remove_branding(str(result))}
     
     # Check for no data markers
+    response_str = json.dumps(response_data).lower()
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "error", "null"]
-    if any(marker in response_text.lower() for marker in no_data_markers):
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-📧 Email: `{email_input}`
-
-🚫 No records available in database
-
-💎 Credits NOT deducted
-{footer()}
-"""
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+    if any(marker in response_str for marker in no_data_markers):
+        formatted_response = format_api_response_dynamic(
+            response_data={"error": "no_result"},
+            query=email_input,
+            lookup_type="email",
+            credits_used=0,
+            credits_left=total_credits,
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
+        safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, email_input, found=False, lookup_type="email", credits_used=0)
         remove_active_session(user_id)
         return
@@ -1627,7 +1846,17 @@ def process_email_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_email_lookup_result(response_text, email_input, user_id, unlimited_active, unlimited_expiry)
+    formatted_response = format_api_response_dynamic(
+        response_data=response_data,
+        query=email_input,
+        lookup_type="email",
+        credits_used=EMAIL_LOOKUP_COST if not unlimited_active else 0,
+        credits_left=get_total_credits(user_id),
+        total_searches=user.get('total_searches', 0) if user else 0,
+        unlimited_active=unlimited_active,
+        unlimited_expiry=unlimited_expiry,
+        footer=footer()
+    )
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1635,50 +1864,15 @@ def process_email_lookup(message):
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, email_input, found=True, lookup_type="email", credits_used=EMAIL_LOOKUP_COST if not unlimited_active else 0)
     
     remove_active_session(user_id)
 
 # ==================== IDENTITY LOOKUP ====================
-def format_identity_lookup_result(response_text, query, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Identity lookup result"""
-    response_text = remove_branding(response_text)
-    
-    output = f"""
-🆔 *IDENTITY LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Query: `{query}`
-
-{response_text}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{IDENTITY_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_identity_lookup(message):
-    """Process Identity (Aadhar) lookup"""
+    """Process Identity (Aadhar) lookup using dynamic formatter"""
     user_id = message.from_user.id
     aadhar_input = str(message.text or "").strip()
 
@@ -1727,22 +1921,18 @@ def process_identity_lookup(message):
     
     if not result or result.get("error") == "no_result":
         if result and result.get("error") == "no_result":
-            output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🆔 Aadhar: `{aadhar_input}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check number again
-• Try another Aadhar number
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            formatted_response = format_api_response_dynamic(
+                response_data=result,
+                query=aadhar_input,
+                lookup_type="identity",
+                credits_used=0,
+                credits_left=total_credits,
+                total_searches=user.get('total_searches', 0) if user else 0,
+                unlimited_active=unlimited_active,
+                unlimited_expiry=unlimited_expiry,
+                footer=footer()
+            )
+            safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="identity")
             notify_admin_api_issue("identity_lookup", aadhar_input, api_error_reason)
@@ -1753,20 +1943,22 @@ def process_identity_lookup(message):
     
     response_text = result.get("response", "")
     response_text = remove_branding(response_text)
+    
+    # Check for no data markers
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid"]
     if any(marker in response_text.lower() for marker in no_data_markers):
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🆔 Aadhar: `{aadhar_input}`
-
-🚫 No records available in database
-
-💎 Credits NOT deducted
-{footer()}
-"""
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+        formatted_response = format_api_response_dynamic(
+            response_data={"error": "no_result"},
+            query=aadhar_input,
+            lookup_type="identity",
+            credits_used=0,
+            credits_left=total_credits,
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
+        safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, aadhar_input, found=False, lookup_type="identity", credits_used=0)
         remove_active_session(user_id)
         return
@@ -1779,7 +1971,18 @@ def process_identity_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_identity_lookup_result(response_text, aadhar_input, user_id, unlimited_active, unlimited_expiry)
+    response_data = {'response': response_text}
+    formatted_response = format_api_response_dynamic(
+        response_data=response_data,
+        query=aadhar_input,
+        lookup_type="identity",
+        credits_used=IDENTITY_LOOKUP_COST if not unlimited_active else 0,
+        credits_left=get_total_credits(user_id),
+        total_searches=user.get('total_searches', 0) if user else 0,
+        unlimited_active=unlimited_active,
+        unlimited_expiry=unlimited_expiry,
+        footer=footer()
+    )
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1787,50 +1990,15 @@ def process_identity_lookup(message):
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, aadhar_input, found=True, lookup_type="identity", credits_used=IDENTITY_LOOKUP_COST if not unlimited_active else 0)
     
     remove_active_session(user_id)
 
 # ==================== IFSC LOOKUP ====================
-def format_ifsc_lookup_result(response_text, query, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the IFSC lookup result"""
-    response_text = remove_branding(response_text)
-    
-    output = f"""
-🏦 *IFSC LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-IFSC Code: `{query.upper()}`
-
-{response_text}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-💎 *Credits Used:* `{IFSC_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    return output
-
 def process_ifsc_lookup(message):
-    """Process IFSC lookup"""
+    """Process IFSC lookup using dynamic formatter"""
     user_id = message.from_user.id
     ifsc_input = str(message.text or "").strip().upper()
 
@@ -1879,22 +2047,18 @@ def process_ifsc_lookup(message):
     
     if not result or result.get("error") == "no_result":
         if result and result.get("error") == "no_result":
-            output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🏦 IFSC Code: `{ifsc_input}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check IFSC code again
-• Try another IFSC code
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            formatted_response = format_api_response_dynamic(
+                response_data=result,
+                query=ifsc_input,
+                lookup_type="ifsc",
+                credits_used=0,
+                credits_left=total_credits,
+                total_searches=user.get('total_searches', 0) if user else 0,
+                unlimited_active=unlimited_active,
+                unlimited_expiry=unlimited_expiry,
+                footer=footer()
+            )
+            safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         else:
             show_api_error(message.chat.id, loading_msg.message_id, lookup_type="ifsc")
             notify_admin_api_issue("ifsc_lookup", ifsc_input, api_error_reason)
@@ -1905,20 +2069,22 @@ def process_ifsc_lookup(message):
     
     response_text = result.get("response", "")
     response_text = remove_branding(response_text)
+    
+    # Check for no data markers
     no_data_markers = ["no data found", "not found", "no record", "no result", "invalid", "not available"]
     if any(marker in response_text.lower() for marker in no_data_markers):
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
-
-🏦 IFSC Code: `{ifsc_input}`
-
-🚫 No records available in database
-
-💎 Credits NOT deducted
-{footer()}
-"""
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+        formatted_response = format_api_response_dynamic(
+            response_data={"error": "no_result"},
+            query=ifsc_input,
+            lookup_type="ifsc",
+            credits_used=0,
+            credits_left=total_credits,
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
+        safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, ifsc_input, found=False, lookup_type="ifsc", credits_used=0)
         remove_active_session(user_id)
         return
@@ -1931,7 +2097,18 @@ def process_ifsc_lookup(message):
     
     increment_total_searches(user_id)
     
-    output = format_ifsc_lookup_result(response_text, ifsc_input, user_id, unlimited_active, unlimited_expiry)
+    response_data = {'response': response_text}
+    formatted_response = format_api_response_dynamic(
+        response_data=response_data,
+        query=ifsc_input,
+        lookup_type="ifsc",
+        credits_used=IFSC_LOOKUP_COST if not unlimited_active else 0,
+        credits_left=get_total_credits(user_id),
+        total_searches=user.get('total_searches', 0) if user else 0,
+        unlimited_active=unlimited_active,
+        unlimited_expiry=unlimited_expiry,
+        footer=footer()
+    )
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -1939,126 +2116,15 @@ def process_ifsc_lookup(message):
         InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu")
     )
     
-    send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+    send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
     
     record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, ifsc_input, found=True, lookup_type="ifsc", credits_used=IFSC_LOOKUP_COST if not unlimited_active else 0)
     
     remove_active_session(user_id)
 
 # ==================== NUMBER LOOKUP ====================
-def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format API/cache result."""
-    if not isinstance(result, dict):
-        result = {}
-
-    parsed_results = []
-
-    api_results = result.get('results')
-    if isinstance(api_results, dict):
-        def sort_key(item):
-            key = str(item[0])
-            m = re.search(r'\d+', key)
-            return int(m.group()) if m else 9999
-        for key, value in sorted(api_results.items(), key=sort_key):
-            if isinstance(value, dict):
-                parsed_results.append(value)
-            elif isinstance(value, list):
-                parsed_results.extend([v for v in value if isinstance(v, dict)])
-    elif isinstance(api_results, list):
-        parsed_results = [v for v in api_results if isinstance(v, dict)]
-
-    if not parsed_results:
-        direct_result_items = [(k, v) for k, v in result.items() if str(k).lower().startswith('result') and isinstance(v, dict)]
-        def sort_key2(item):
-            m = re.search(r'\d+', str(item[0]))
-            return int(m.group()) if m else 9999
-        for key, value in sorted(direct_result_items, key=sort_key2):
-            parsed_results.append(value)
-
-    if not parsed_results and ('name' in result or 'mobile' in result):
-        parsed_results = [result]
-
-    total_results_found = len(parsed_results)
-    parsed_results = parsed_results[:MAX_LOOKUP_RESULTS]
-    showing_text = f"\n📌 Showing: `{len(parsed_results)}` / `{total_results_found}`" if total_results_found > MAX_LOOKUP_RESULTS else ""
-    
-    output = f"""
-🔍 *NUMBER LOOKUP RESULT*
-━━━━━━━━━━━━━━━━━━
-
-📊 Total Results Found: `{total_results_found}`{showing_text}
-"""
-    
-    first_name = "Unknown"
-    
-    for idx, data in enumerate(parsed_results, 1):
-        name = data.get('name') or data.get('Name') or data.get('full_name') or 'N/A'
-        if idx == 1 and name != 'N/A':
-            first_name = name
-            
-        alt_mobile = data.get('alt_mobile') or data.get('alternate_mobile') or data.get('Alt_Mobile') or 'N/A'
-        if alt_mobile == 'NA' or alt_mobile == 'n/a':
-            alt_mobile = 'N/A'
-        
-        father_name = data.get('father_name') or data.get('Father_Name') or data.get('father') or 'N/A'
-        email = data.get('email') or data.get('Email') or 'N/A'
-        if email == 'n/a':
-            email = 'N/A'
-            
-        aadhar = data.get('aadhar_number') or data.get('aadhar') or data.get('Aadhar') or 'N/A'
-        if aadhar == 'n/a':
-            aadhar = 'N/A'
-            
-        operator = data.get('operator') or data.get('Operator') or data.get('carrier') or 'N/A'
-        circle = data.get('state_circle') or data.get('circle') or data.get('Circle') or data.get('state') or 'N/A'
-        address = data.get('address') or data.get('Address') or data.get('full_address') or 'N/A'
-        if address == 'NA':
-            address = 'N/A'
-        
-        mobile = data.get('mobile') or data.get('Mobile') or data.get('phone') or phone
-        
-        output += f"""
-
-━━━━━━━━━━━━━━━━━━
-📄 *RESULT {idx}*
-
-📱 Mobile: `{mobile}`
-📞 Alternate: `{alt_mobile}`
-👤 Name: `{name}`
-👨 Father: `{father_name}`
-📧 Email: `{email}`
-🪪 Aadhaar: `{aadhar}`
-📡 Operator: `{operator}`
-📍 Circle: `{circle}`
-🏠 Address: `{address}`"""
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
-    
-    if unlimited_active:
-        output += f"""
-
-━━━━━━━━━━━━━━━━━━
-🚀 *UNLIMITED PLAN ACTIVE*
-No credits deducted!
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
-"""
-    else:
-        output += f"""
-
-━━━━━━━━━━━━━━━━━━
-💎 *Credits Used:* `{NUMBER_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-🔎 *Total Searches:* `{user.get('total_searches', 0) if user else 0}`"""
-    
-    output += f"""
-{footer()}
-"""
-    
-    return output, first_name
-
 def process_lookup(message):
-    """Process number lookup"""
+    """Process number lookup using dynamic formatter"""
     user_id = message.from_user.id
     raw_phone = str(message.text or "").strip()
 
@@ -2137,7 +2203,17 @@ You can also protect your number for ₹99!
         
         increment_total_searches(user_id)
         
-        output, first_name = format_lookup_result(cached_result, phone, user_id, unlimited_active, unlimited_expiry)
+        formatted_response = format_api_response_dynamic(
+            response_data=cached_result,
+            query=phone,
+            lookup_type="number",
+            credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0,
+            credits_left=get_total_credits(user_id),
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
         
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -2146,7 +2222,7 @@ You can also protect your number for ₹99!
         )
         markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
         
-        send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+        send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
         
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
         
@@ -2171,7 +2247,18 @@ You can also protect your number for ₹99!
         
         increment_total_searches(user_id)
         save_cached_result(phone, result)
-        output, first_name = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
+        
+        formatted_response = format_api_response_dynamic(
+            response_data=result,
+            query=phone,
+            lookup_type="number",
+            credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0,
+            credits_left=get_total_credits(user_id),
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
         
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -2180,7 +2267,7 @@ You can also protect your number for ₹99!
         )
         markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
         
-        send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+        send_or_edit_long_message(message.chat.id, loading_msg.message_id, formatted_response, reply_markup=markup, parse_mode='Markdown')
         
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
         
@@ -2194,28 +2281,20 @@ You can also protect your number for ₹99!
                 return
 
         increment_total_searches(user_id)
-        updated_total = get_total_credits(user_id)
-        output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━
+        
+        formatted_response = format_api_response_dynamic(
+            response_data={"error": "no_result"},
+            query=phone,
+            lookup_type="number",
+            credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0,
+            credits_left=get_total_credits(user_id),
+            total_searches=user.get('total_searches', 0) if user else 0,
+            unlimited_active=unlimited_active,
+            unlimited_expiry=unlimited_expiry,
+            footer=footer()
+        )
 
-📱 Number
-`{phone}`
-
-🚫 No records available in database
-
-💡 Tips:
-• Check number again
-• Try another number
-• Ensure Indian mobile number
-
-━━━━━━━━━━━━━━━━━━
-💎 *Credits Used:* `{0 if unlimited_active else NUMBER_LOOKUP_COST}`
-💎 *Credits Left:* `{updated_total}`
-{footer()}
-"""
-
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+        safe_edit_message(message.chat.id, loading_msg.message_id, formatted_response, parse_mode='Markdown')
 
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
         remove_active_session(user_id)
@@ -3175,7 +3254,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 7.0.2"
+    return "TraceX Bot Running - Version 8.0.0"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -4360,29 +4439,18 @@ if __name__ == "__main__":
     print(f"Admin ID: {ADMIN_ID}")
     print(f"Admin: {ADMIN_USERNAME}")
     print("=" * 60)
-    print("✅ New Features Added in v7.0.2:")
-    print("   • PAN Card Lookup (5 Credits)")
-    print("   • Vehicle to Owner Number (10 Credits)")
-    print("   • Vehicle Lookup (5 Credits)")
-    print("   • Email Lookup (20 Credits)")
-    print("   • Updated All API Endpoints")
-    print("   • New Pricing: 1 Credit = ₹1")
-    print("   • New Unlimited Plans:")
-    print("     • 1 Hour - ₹49")
-    print("     • 1 Day - ₹99")
-    print("     • 7 Days - ₹499")
-    print("     • 30 Days - ₹1499")
-    print("   • Multiple Channel Verification (4 Channels)")
-    print("   • Fixed Payment Screenshot Forwarding")
-    print("   • Fixed Broadcast for Large User Base")
-    print("   • Fixed Session Management")
-    print("   • Fixed Message Edit Errors")
-    print("   • Removed 'developer' branding from all responses")
-    print("   • Updated Website URL to tracexdata.online")
-    print("   • Updated Credit Costs:")
-    print("     • Number: 2, Telegram: 5, Identity: 5")
-    print("     • IFSC: 3, Email: 20, Vehicle: 5")
-    print("     • Vehicle Owner: 10, PAN: 5")
+    print("✅ New Features Added in v8.0.0:")
+    print("   • Complete Dynamic Response Formatter")
+    print("   • No hardcoded field names (Name, Phone, Email, etc.)")
+    print("   • Auto-detects and displays every key/value from API")
+    print("   • Future API changes appear automatically without code changes")
+    print("   • Supports nested JSON objects and arrays recursively")
+    print("   • Human-friendly label formatting (full_name → Full Name)")
+    print("   • Maintains original response order")
+    print("   • Handles multiple objects with numbering")
+    print("   • Skips null, empty, or missing values")
+    print("   • Professional, clean output with proper emojis")
+    print("   • Production-ready with comprehensive error handling")
     print("=" * 60)
     
     # Start Flask keep_alive server
