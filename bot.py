@@ -166,7 +166,6 @@ REQUIRED_CHANNELS = [
     {"name": "Beniwal Mods", "link": "https://t.me/beniwalmods", "username": "@beniwalmods"},
     {"name": "Gaurav Beniwal", "link": "https://t.me/Gaurav_beni_0001", "username": "@Gaurav_beni_0001"},
     {"name": "Beniwal Zone", "link": "https://t.me/BeniwalzonYT", "username": "@BeniwalzonYT"},
-    {"name": "Gaurav Beniwal Chat", "link": "https://t.me/gauravbeniwalchat", "username": "@gauravbeniwalchat"},
 ]
 
 PAYMENT_QR_IMAGE = os.getenv("PAYMENT_QR_IMAGE", "payment_qr.png")
