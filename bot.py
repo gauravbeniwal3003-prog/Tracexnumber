@@ -173,13 +173,13 @@ WEBSITE_URL = "https://tracexdata.online"
 
 # Updated Plan Configuration - 1 credit = ₹1
 PLAN_CONFIG = {
-    "c40": {"amount": 40, "credits": 40, "unlimited_minutes": 0, "payment_for": "credits", "label": "40 Credits"},
-    "c120": {"amount": 120, "credits": 120, "unlimited_minutes": 0, "payment_for": "credits", "label": "120 Credits"},
-    "c400": {"amount": 400, "credits": 400, "unlimited_minutes": 0, "payment_for": "credits", "label": "400 Credits"},
-    "u1h": {"amount": 49, "credits": 0, "unlimited_minutes": 60, "payment_for": "unlimited", "label": "1 Hour Unlimited"},
-    "u1d": {"amount": 99, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited"},
-    "u1w": {"amount": 499, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited"},
-    "u1m": {"amount": 1499, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited"},
+    "c40": {"amount": 20, "credits": 40, "unlimited_minutes": 0, "payment_for": "credits", "label": "40 Credits"},
+    "c120": {"amount": 50, "credits": 120, "unlimited_minutes": 0, "payment_for": "credits", "label": "120 Credits"},
+    "c400": {"amount": 150, "credits": 400, "unlimited_minutes": 0, "payment_for": "credits", "label": "400 Credits"},
+    "u1h": {"amount": 29, "credits": 0, "unlimited_minutes": 60, "payment_for": "unlimited", "label": "1 Hour Unlimited"},
+    "u1d": {"amount": 69, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited"},
+    "u1w": {"amount": 199, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited"},
+    "u1m": {"amount": 499, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited"},
     "protect_number": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Number Protection"},
     "protect_telegram": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_telegram", "label": "Telegram Number Protection"},
     "bot_booking": {"amount": 399, "credits": 0, "unlimited_minutes": 0, "payment_for": "bot_booking", "label": "Custom Bot Booking Add-on"},
