@@ -182,20 +182,6 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# Branding patterns to remove
-BRANDING_PATTERNS = [
-    r'💳 BUY API\s*:\s*@[a-zA-Z0-9_]+\s*',
-    r'🆘 SUPPORT\s*:\s*@[a-zA-Z0-9_]+\s*',
-    r'BUY API\s*:\s*@[a-zA-Z0-9_]+\s*',
-    r'SUPPORT\s*:\s*@[a-zA-Z0-9_]+\s*',
-    r'developer["\s:]+@[a-zA-Z0-9_]+\s*',
-    r'developer["\s:]+@UsersXinfo_admin\s*',
-    r'@UsersXinfo_admin\s*',
-    r'UsersXinfo_admin\s*',
-]
-
-GENERIC_API_ERROR_MESSAGE = "❌ *API Error*\n\n💎 Credits NOT deducted"
-
 # Track when last website registration reminder was sent to each user
 last_reminder_sent = {}
 REMINDER_INTERVAL_HOURS = 4
@@ -367,25 +353,6 @@ def format_json_for_telegram(data):
     except Exception as e:
         print(f"JSON format error: {e}")
         return str(data)
-
-def clean_result_dict(result):
-    """Remove developer/branding fields from result dictionary recursively"""
-    if not isinstance(result, dict):
-        return result
-    
-    # Remove developer fields
-    fields_to_remove = ['developer', 'api_buy_link', 'website_link', 'support', 'buy_api', 'BUY API', 'SUPPORT']
-    for field in fields_to_remove:
-        result.pop(field, None)
-    
-    # Remove branding from nested dicts
-    for key, value in result.items():
-        if isinstance(value, dict):
-            result[key] = clean_result_dict(value)
-        elif isinstance(value, list):
-            result[key] = [clean_result_dict(item) if isinstance(item, dict) else item for item in value]
-    
-    return result
 
 # ==================== MAIN MENU KEYBOARD ====================
 def get_main_keyboard():
@@ -585,31 +552,8 @@ def telegram_lookup_protection_markup():
     markup.add(InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu"))
     return markup
 
-def remove_branding(text):
-    """Remove all branding patterns from API response text including developer info"""
-    if not text:
-        return text
-    result = text
-    for pattern in BRANDING_PATTERNS:
-        result = re.sub(pattern, '', result, flags=re.IGNORECASE)
-    # Remove any remaining developer references
-    result = re.sub(r'developer\s*[:=]\s*@[a-zA-Z0-9_]+\s*', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'developer\s*[:=]\s*[a-zA-Z0-9_]+\s*', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'@UsersXinfo_admin\s*', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'UsersXinfo_admin\s*', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
-    result = result.strip()
-    return result
-
-def show_api_error(chat_id, message_id, lookup_type="api"):
-    """Show only a clean API error to users."""
-    try:
-        bot.edit_message_text(GENERIC_API_ERROR_MESSAGE, chat_id, message_id, parse_mode="Markdown")
-    except Exception as edit_error:
-        print(f"Failed to show generic API error for {lookup_type}: {edit_error}")
-
 def call_generic_lookup_api(url):
-    """Generic API caller for all lookup types. Returns: (data, error_reason)"""
+    """Generic API caller that returns raw response"""
     try:
         print(f"[API CALL] {url}")
         
@@ -623,45 +567,27 @@ def call_generic_lookup_api(url):
         print(f"[API CALL] Response Status: {response.status_code}")
         
         if response.status_code != 200:
-            return None, f"http_{response.status_code}"
+            return {"error": f"HTTP {response.status_code}", "raw": response.text[:500]}, None
         
         content = response.text
         if not content or len(content.strip()) < 5:
-            return None, "empty_response"
+            return {"error": "empty_response"}, None
         
-        # Remove branding from raw content
-        content = remove_branding(content)
-        
-        # Try to parse as JSON first
+        # Try to parse as JSON
         try:
             data = response.json()
-            if isinstance(data, dict):
-                # Clean the data
-                data = clean_result_dict(data)
-                if data.get('error'):
-                    return {"error": data.get('error')}, None
-                return data, None
+            return data, None
         except:
-            # If not JSON, treat as HTML/text response
-            no_data_markers = [
-                "no data found", "not found", "no records", "no record",
-                "no result", "no results", "data not found", "record not found",
-                "invalid", "error"
-            ]
-            lower_content = content.lower()
-            if any(marker in lower_content for marker in no_data_markers):
-                return {"error": "no_result"}, None
-            
-            cleaned_content = remove_branding(content)
-            return {"response": cleaned_content, "raw": content}, None
+            # If not JSON, return raw text
+            return {"raw_response": content}, None
         
     except requests.exceptions.Timeout:
-        return None, "timeout"
+        return {"error": "timeout"}, None
     except requests.exceptions.ConnectionError:
-        return None, "connection_error"
+        return {"error": "connection_error"}, None
     except Exception as e:
         print(f"[API CALL] Exception: {e}")
-        return None, f"exception_{e}"
+        return {"error": f"exception_{e}"}, None
 
 def call_number_lookup_api(phone):
     """Call the Number lookup API"""
@@ -670,7 +596,7 @@ def call_number_lookup_api(phone):
         return call_generic_lookup_api(url)
     except Exception as e:
         print(f"[NUMBER LOOKUP API] Exception: {e}")
-        return None, f"exception_{e}"
+        return {"error": f"exception_{e}"}, None
 
 def call_telegram_lookup_api(username):
     """Call the Telegram lookup API"""
@@ -681,45 +607,12 @@ def call_telegram_lookup_api(username):
         return call_generic_lookup_api(url)
     except Exception as e:
         print(f"[TELEGRAM LOOKUP API] Exception: {e}")
-        return None, f"exception_{e}"
-
-def parse_telegram_html_response(html_content):
-    """Parse HTML response from Telegram lookup API"""
-    result = {}
-    
-    # Clean the content first
-    html_content = remove_branding(html_content)
-    
-    tg_id_match = re.search(r'🆔 Telegram ID:\s*<code>(\d+)</code>', html_content)
-    if tg_id_match:
-        result['telegram_id'] = tg_id_match.group(1)
-    
-    phone_match = re.search(r'📱 Phone Number:\s*<code>(\d+)</code>', html_content)
-    if phone_match:
-        result['phone_number'] = phone_match.group(1)
-    
-    username_match = re.search(r'👥 Username:\s*@([a-zA-Z0-9_]+)', html_content)
-    if username_match:
-        result['username'] = '@' + username_match.group(1)
-    
-    country_match = re.search(r'🌍 Country:\s*([A-Za-z\s]+)', html_content)
-    if country_match:
-        result['country'] = country_match.group(1).strip()
-    
-    cc_match = re.search(r'📞 Country Code:\s*\+(\d+)', html_content)
-    if cc_match:
-        result['country_code'] = '+' + cc_match.group(1)
-    
-    return result
+        return {"error": f"exception_{e}"}, None
 
 def has_valid_number_results(result):
     """True only when API/cache has at least one usable number result."""
     if not isinstance(result, dict):
         return False
-    
-    # Remove developer field if present
-    if 'developer' in result:
-        del result['developer']
     
     if 'results' in result:
         api_results = result.get('results')
@@ -785,25 +678,6 @@ def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode="
             return None
         raise e
 
-def safe_send_message(chat_id, text, reply_markup=None, parse_mode="Markdown"):
-    """Safely send a message, with error handling."""
-    try:
-        return bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode, disable_web_page_preview=True)
-    except Exception as e:
-        print(f"Send message error: {e}")
-        return None
-
-def notify_admin_api_issue(lookup_type, query, error_reason):
-    """Send compact admin-only debug alert."""
-    try:
-        bot.send_message(
-            ADMIN_ID,
-            f"⚠️ *API TEMP ISSUE*\n\nType: `{lookup_type}`\nQuery: `{query}`\nReason: `{str(error_reason)[:500]}`\n\nUser credits were not deducted.",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"Admin API issue notify failed: {e}")
-
 def is_active_session(user_id):
     """Check if user has an active session"""
     with active_sessions_lock:
@@ -819,67 +693,25 @@ def remove_active_session(user_id):
     with active_sessions_lock:
         active_sessions.discard(user_id)
 
-# ==================== FORMATTING FUNCTIONS WITH JSON MARKDOWN ====================
+# ==================== FORMATTING FUNCTIONS ====================
 
 def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format API/cache result with JSON markdown."""
+    """Format API result as JSON."""
     if not isinstance(result, dict):
-        result = {}
+        result = {"response": str(result)}
 
-    # Clean result - remove developer branding
-    result = clean_result_dict(result)
-
-    # Format the entire result as JSON with markdown
     json_output = format_json_for_telegram(result)
     
-    parsed_results = []
-    api_results = result.get('results')
-    if isinstance(api_results, dict):
-        def sort_key(item):
-            key = str(item[0])
-            m = re.search(r'\d+', key)
-            return int(m.group()) if m else 9999
-        for key, value in sorted(api_results.items(), key=sort_key):
-            if isinstance(value, dict):
-                parsed_results.append(value)
-            elif isinstance(value, list):
-                parsed_results.extend([v for v in value if isinstance(v, dict)])
-    elif isinstance(api_results, list):
-        parsed_results = [v for v in api_results if isinstance(v, dict)]
-
-    if not parsed_results:
-        direct_result_items = [(k, v) for k, v in result.items() if str(k).lower().startswith('result') and isinstance(v, dict)]
-        def sort_key2(item):
-            m = re.search(r'\d+', str(item[0]))
-            return int(m.group()) if m else 9999
-        for key, value in sorted(direct_result_items, key=sort_key2):
-            parsed_results.append(value)
-
-    if not parsed_results and ('name' in result or 'mobile' in result):
-        parsed_results = [result]
-
-    total_results_found = len(parsed_results)
-    parsed_results = parsed_results[:MAX_LOOKUP_RESULTS]
-    showing_text = f"\n📌 Showing: `{len(parsed_results)}` / `{total_results_found}`" if total_results_found > MAX_LOOKUP_RESULTS else ""
+    user = get_user(user_id)
+    updated_total = get_total_credits(user_id)
     
     output = f"""
 🔍 *NUMBER LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━
 
-📊 Total Results Found: `{total_results_found}`{showing_text}
-
-📄 *JSON Response:*
+📄 *Response:*
 {json_output}
 """
-    
-    first_name = "Unknown"
-    for idx, data in enumerate(parsed_results, 1):
-        name = data.get('name') or data.get('Name') or data.get('full_name') or 'N/A'
-        if idx == 1 and name != 'N/A':
-            first_name = name
-    
-    user = get_user(user_id)
-    updated_total = get_total_credits(user_id)
     
     if unlimited_active:
         output += f"""
@@ -901,12 +733,12 @@ Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
 {footer()}
 """
     
-    return output, first_name
+    return output
 
 def format_telegram_lookup_result(result, username, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Telegram lookup result with JSON markdown."""
-    # Clean result
-    result = clean_result_dict(result)
+    """Format the Telegram lookup result as JSON."""
+    if not isinstance(result, dict):
+        result = {"response": str(result)}
     
     json_output = format_json_for_telegram(result)
     
@@ -916,7 +748,7 @@ def format_telegram_lookup_result(result, username, user_id, unlimited_active=Fa
 
 Lookup Result for: `{username}`
 
-📄 *JSON Response:*
+📄 *Response:*
 {json_output}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1216,9 +1048,6 @@ def is_telegram_protected(telegram_id):
 
 def add_protected_telegram(telegram_id, telegram_user_id=None):
     return add_protected_value("protected_telegrams", "telegram_id", str(telegram_id))
-
-def normalize_vehicle_number(value):
-    return re.sub(r'[^A-Z0-9]', '', str(value or '').upper())
 
 def is_valid_telegram_id(value):
     return bool(re.match(r'^\d{4,15}$', str(value or '').strip()))
@@ -2909,9 +2738,8 @@ def admin_api_test(message):
         return
     bot.reply_to(message, "🧪 Testing Number API...")
     result, err = call_number_lookup_api(phone)
-    if result and has_valid_number_results(result):
-        total = len(result.get("results", {})) if isinstance(result.get("results"), dict) else 1
-        bot.reply_to(message, f"✅ Number API OK\nResults: `{total}`", parse_mode="Markdown")
+    if result and not result.get('error'):
+        bot.reply_to(message, f"✅ Number API OK\nResponse: `{str(result)[:200]}`", parse_mode="Markdown")
     else:
         bot.reply_to(message, f"❌ Number API failed\nReason: `{str(err)[:200]}`", parse_mode="Markdown")
 
@@ -3007,7 +2835,7 @@ You can also protect your number for ₹99!
         
         increment_total_searches(user_id)
         
-        output, first_name = format_lookup_result(cached_result, phone, user_id, unlimited_active, unlimited_expiry)
+        output = format_lookup_result(cached_result, phone, user_id, unlimited_active, unlimited_expiry)
         
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -3023,19 +2851,31 @@ You can also protect your number for ₹99!
         remove_active_session(user_id)
         return
     
-    result, api_error_reason = call_number_lookup_api(phone)
+    result = call_number_lookup_api(phone)
 
     # Stop animation
     stop_animation.set()
     animation_thread.join(timeout=1)
 
-    if not result:
-        show_api_error(message.chat.id, loading_msg.message_id, lookup_type="number")
-        notify_admin_api_issue("number", phone, api_error_reason)
+    if not result or result.get('error'):
+        output = f"""
+❌ *API RESPONSE*
+━━━━━━━━━━━━━━━━━━
+
+📱 Number: `{phone}`
+
+📄 *Response:*
+{format_json_for_telegram(result or {"error": "No response"})}
+
+💎 Credits NOT deducted
+{footer()}
+"""
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
         remove_active_session(user_id)
         return
 
+    # Check if response has valid results
     if has_valid_number_results(result):
         if not unlimited_active:
             if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
@@ -3045,7 +2885,7 @@ You can also protect your number for ₹99!
         
         increment_total_searches(user_id)
         save_cached_result(phone, result)
-        output, first_name = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
+        output = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
         
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -3061,6 +2901,7 @@ You can also protect your number for ₹99!
         remove_active_session(user_id)
         
     else:
+        # No data found - still show the raw response
         if not unlimited_active:
             if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
                 safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
@@ -3069,20 +2910,15 @@ You can also protect your number for ₹99!
 
         increment_total_searches(user_id)
         updated_total = get_total_credits(user_id)
+        
         output = f"""
-❌ *NO DATA FOUND*
+🔍 *NUMBER LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━
 
-📱 Number
-`{phone}`
+📱 Number: `{phone}`
 
-🚫 No records available in database
-
-💡 Tips:
-• Check number again
-• Try another number
-• Ensure Indian mobile number
-• Register on website for better results: {WEBSITE_URL}
+📄 *API Response:*
+{format_json_for_telegram(result)}
 
 ━━━━━━━━━━━━━━━━━━
 💎 *Credits Used:* `{0 if unlimited_active else NUMBER_LOOKUP_COST}`
@@ -3151,43 +2987,29 @@ def process_telegram_lookup(message):
     # Give animation time to show
     time.sleep(1)
     
-    result, api_error_reason = call_telegram_lookup_api(username_input)
+    result = call_telegram_lookup_api(username_input)
     
     # Stop animation
     stop_animation.set()
     animation_thread.join(timeout=1)
     
-    if not result or result.get("error") == "no_result":
-        if result and result.get("error") == "no_result":
-            output = f"""
-❌ *NO DATA FOUND*
+    if not result or result.get('error'):
+        output = f"""
+❌ *API RESPONSE*
 ━━━━━━━━━━━━━━━━━━
 
 🔍 Username: `{username_clean}`
 
-🚫 No records available in database
-
-💡 Tips:
-• Check username again
-• Try another username
-• Ensure username is correct
-• Register on website for better results: {WEBSITE_URL}
+📄 *Response:*
+{format_json_for_telegram(result or {"error": "No response"})}
 
 💎 Credits NOT deducted
 {footer()}
 """
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-        else:
-            show_api_error(message.chat.id, loading_msg.message_id, lookup_type="telegram")
-            notify_admin_api_issue("telegram_lookup", username_input, api_error_reason)
-        
+        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
         remove_active_session(user_id)
         return
-    
-    # Clean the result response
-    if isinstance(result, dict):
-        result = clean_result_dict(result)
     
     # Check if Telegram ID is protected
     telegram_id = None
@@ -3263,6 +3085,7 @@ if __name__ == "__main__":
     print("   • Website Registration Reminders Every 4 Hours")
     print("   • Website Registration Promoted Throughout Bot")
     print("   • Clean JSON Output with Code Blocks")
+    print("   • Removed API Error System - Direct API Response Forward")
     print("=" * 60)
     
     # Start Flask keep_alive server
