@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 11.0.1 - Referral System (botrefer table)
+Version: 11.0.2 - Fixed Syntax Error
 """
 
 import os
@@ -71,7 +71,7 @@ WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=Fals
 GROUP_LINK = get_env_var("GROUP_LINK", required=False, default="https://t.me/Gaurav_beni_0001")
 
 # Version
-BOT_VERSION = "11.0.1"
+BOT_VERSION = "11.0.2"
 
 # Costs - REDUCED BY 40%
 NUMBER_LOOKUP_COST = int(get_env_var("NUMBER_LOOKUP_COST", required=False, default="3"))
@@ -3151,7 +3151,8 @@ def confirm_broadcast(call):
     
     success = 0
     failed = 0
-    offset = 0    batch_size = 100
+    offset = 0
+    batch_size = 100
     
     while True:
         users = get_all_users_batch(batch_size, offset)
@@ -3524,7 +3525,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 11.0.1 - Referral System (botrefer table)!"
+    return "TraceX Bot Running - Version 11.0.2 - Referral System (botrefer table)!"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
