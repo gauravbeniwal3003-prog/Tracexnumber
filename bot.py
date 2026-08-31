@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 9.0.0 - SECURE VERSION (Token from Environment)
+Version: 10.0.0 - Direct API Fetch Only, 40% Price Reduction
 """
 
 import os
@@ -27,7 +27,7 @@ import threading
 import signal
 import uuid
 import json
-from flask import Flask, request, jsonify
+from flask import Flask
 
 # ==================== SECURE CONFIGURATION ====================
 # ALL SENSITIVE DATA FROM ENVIRONMENT VARIABLES
@@ -71,12 +71,14 @@ WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", default="http
 GROUP_LINK = get_env_var("GROUP_LINK", default="https://t.me/Gaurav_beni_0001")
 
 # Version
-BOT_VERSION = "9.0.0"
+BOT_VERSION = "10.0.0"
 
-# Costs - from environment with defaults
-NUMBER_LOOKUP_COST = int(get_env_var("NUMBER_LOOKUP_COST", default="5"))
-TELEGRAM_LOOKUP_COST = int(get_env_var("TELEGRAM_LOOKUP_COST", default="10"))
-MINIMUM_RECHARGE = int(get_env_var("MINIMUM_RECHARGE", default="50"))
+# Costs - REDUCED BY 40%
+# Old: Number ₹5, Telegram ₹10
+# New: Number ₹3, Telegram ₹6 (40% reduction)
+NUMBER_LOOKUP_COST = int(get_env_var("NUMBER_LOOKUP_COST", default="3"))
+TELEGRAM_LOOKUP_COST = int(get_env_var("TELEGRAM_LOOKUP_COST", default="6"))
+MINIMUM_RECHARGE = int(get_env_var("MINIMUM_RECHARGE", default="30"))  # Reduced from ₹50 to ₹30
 
 MAX_LOOKUP_RESULTS = 20
 TELEGRAM_SAFE_LIMIT = 3900
@@ -85,7 +87,6 @@ PAYMENT_SESSION_COOLDOWN_SECONDS = 60
 REMINDER_INTERVAL_HOURS = 4
 
 # Required Channels for verification - from environment
-# Format: "name1|username1|link1,name2|username2|link2"
 channels_str = get_env_var("REQUIRED_CHANNELS", required=False, default="Beniwal Mods|beniwalmods|https://t.me/beniwalmods,Gaurav Beniwal|Gaurav_beni_0001|https://t.me/Gaurav_beni_0001")
 REQUIRED_CHANNELS = []
 for channel in channels_str.split(','):
@@ -97,19 +98,23 @@ for channel in channels_str.split(','):
             "link": parts[2].strip()
         })
 
-# Plan Configuration
+# Plan Configuration - REDUCED BY 40%
+# Old prices → New prices (40% reduction)
 PLAN_CONFIG = {
-    "c50": {"amount": 50, "credits": 50, "unlimited_minutes": 0, "payment_for": "credits", "label": "50 Credits"},
-    "c100": {"amount": 100, "credits": 105, "unlimited_minutes": 0, "payment_for": "credits", "label": "105 Credits (Bonus 5)"},
-    "c200": {"amount": 200, "credits": 220, "unlimited_minutes": 0, "payment_for": "credits", "label": "220 Credits (Bonus 20)"},
-    "c500": {"amount": 500, "credits": 550, "unlimited_minutes": 0, "payment_for": "credits", "label": "550 Credits (Bonus 50)"},
-    "c1000": {"amount": 1000, "credits": 1150, "unlimited_minutes": 0, "payment_for": "credits", "label": "1150 Credits (Bonus 150)"},
-    "u1h": {"amount": 49, "credits": 0, "unlimited_minutes": 60, "payment_for": "unlimited", "label": "1 Hour Unlimited"},
-    "u1d": {"amount": 100, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited"},
-    "u1w": {"amount": 400, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited"},
-    "u1m": {"amount": 1200, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited"},
-    "protect_number": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Number Protection"},
-    "protect_telegram": {"amount": 99, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_telegram", "label": "Telegram Number Protection"},
+    # Credit Packs - Reduced 40%
+    "c50": {"amount": 30, "credits": 50, "unlimited_minutes": 0, "payment_for": "credits", "label": "50 Credits - ₹30"},
+    "c100": {"amount": 60, "credits": 105, "unlimited_minutes": 0, "payment_for": "credits", "label": "105 Credits - ₹60 (Bonus 5)"},
+    "c200": {"amount": 120, "credits": 220, "unlimited_minutes": 0, "payment_for": "credits", "label": "220 Credits - ₹120 (Bonus 20)"},
+    "c500": {"amount": 300, "credits": 550, "unlimited_minutes": 0, "payment_for": "credits", "label": "550 Credits - ₹300 (Bonus 50)"},
+    "c1000": {"amount": 600, "credits": 1150, "unlimited_minutes": 0, "payment_for": "credits", "label": "1150 Credits - ₹600 (Bonus 150)"},
+    # Unlimited Plans - Reduced 40%
+    "u1h": {"amount": 29, "credits": 0, "unlimited_minutes": 60, "payment_for": "unlimited", "label": "1 Hour Unlimited - ₹29"},
+    "u1d": {"amount": 60, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited - ₹60"},
+    "u1w": {"amount": 240, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited - ₹240"},
+    "u1m": {"amount": 720, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited - ₹720"},
+    # Protection - Reduced 40%
+    "protect_number": {"amount": 59, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Number Protection - ₹59"},
+    "protect_telegram": {"amount": 59, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_telegram", "label": "Telegram Protection - ₹59"},
 }
 
 # ==================== VALIDATE STARTUP ====================
@@ -140,8 +145,9 @@ def validate_startup_config():
     print("✅ All required environment variables are set")
     print(f"📱 Bot Version: {BOT_VERSION}")
     print(f"👑 Admin ID: {ADMIN_ID}")
+    print(f"💰 Number Lookup: ₹{NUMBER_LOOKUP_COST} (40% reduced)")
+    print(f"💰 Telegram Lookup: ₹{TELEGRAM_LOOKUP_COST} (40% reduced)")
 
-# Run validation before any other operations
 validate_startup_config()
 
 # ==================== LIGHTWEIGHT SUPABASE CLIENT ====================
@@ -283,6 +289,25 @@ MAINTENANCE_MODE = False
 # Track when last website registration reminder was sent to each user
 last_reminder_sent = {}
 
+# ==================== BRANDING REMOVAL FUNCTION ====================
+def remove_branding(data):
+    """Remove branding from API response completely"""
+    if not isinstance(data, dict):
+        return data
+    
+    # Remove branding if present
+    if "branding" in data:
+        del data["branding"]
+    
+    # Recursively clean nested structures
+    for key, value in data.items():
+        if isinstance(value, dict):
+            data[key] = remove_branding(value)
+        elif isinstance(value, list):
+            data[key] = [remove_branding(item) if isinstance(item, dict) else item for item in value]
+    
+    return data
+
 # ==================== ANIMATED LOADING FUNCTION ====================
 def update_loading_animation(chat_id, message_id, stage):
     """Update loading message with animated dots"""
@@ -367,21 +392,21 @@ def cancel_button():
 def credit_packs_markup():
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("💰 50 Credits - ₹50", callback_data="plan_c50"),
-        InlineKeyboardButton("💰 105 Credits - ₹100", callback_data="plan_c100"),
-        InlineKeyboardButton("💰 220 Credits - ₹200", callback_data="plan_c200"),
-        InlineKeyboardButton("💰 550 Credits - ₹500", callback_data="plan_c500"),
-        InlineKeyboardButton("💰 1150 Credits - ₹1000", callback_data="plan_c1000")
+        InlineKeyboardButton("💰 50 Credits - ₹30", callback_data="plan_c50"),
+        InlineKeyboardButton("💰 105 Credits - ₹60", callback_data="plan_c100"),
+        InlineKeyboardButton("💰 220 Credits - ₹120", callback_data="plan_c200"),
+        InlineKeyboardButton("💰 550 Credits - ₹300", callback_data="plan_c500"),
+        InlineKeyboardButton("💰 1150 Credits - ₹600", callback_data="plan_c1000")
     )
     markup.add(
-        InlineKeyboardButton("🚀 1 Hour - ₹49", callback_data="plan_u1h"),
-        InlineKeyboardButton("🚀 1 Day - ₹100", callback_data="plan_u1d"),
-        InlineKeyboardButton("🚀 7 Days - ₹400", callback_data="plan_u1w"),
-        InlineKeyboardButton("🚀 30 Days - ₹1200", callback_data="plan_u1m")
+        InlineKeyboardButton("🚀 1 Hour - ₹29", callback_data="plan_u1h"),
+        InlineKeyboardButton("🚀 1 Day - ₹60", callback_data="plan_u1d"),
+        InlineKeyboardButton("🚀 7 Days - ₹240", callback_data="plan_u1w"),
+        InlineKeyboardButton("🚀 30 Days - ₹720", callback_data="plan_u1m")
     )
     markup.add(
-        InlineKeyboardButton("🛡️ Number Protection - ₹99", callback_data="plan_protect_number"),
-        InlineKeyboardButton("💬 Telegram Protection - ₹99", callback_data="plan_protect_telegram")
+        InlineKeyboardButton("🛡️ Number Protection - ₹59", callback_data="plan_protect_number"),
+        InlineKeyboardButton("💬 Telegram Protection - ₹59", callback_data="plan_protect_telegram")
     )
     markup.add(InlineKeyboardButton("🔙 BACK", callback_data="main_menu"))
     return markup
@@ -706,34 +731,6 @@ def add_protected_number(phone_number, telegram_user_id=None):
         print(f"Add protected number error: {e}")
         return False
 
-def get_cached_result(phone_number):
-    try:
-        response = supabase.table("search_results").select("*").eq("mobile_number", phone_number).execute()
-        if response.data and len(response.data) > 0:
-            return response.data[0].get('raw_data')
-        return None
-    except Exception as e:
-        print(f"Get cached result error: {e}")
-        return None
-
-def save_cached_result(phone_number, raw_data):
-    try:
-        existing = supabase.table("search_results").select("mobile_number").eq("mobile_number", phone_number).limit(1).execute()
-        if existing.data and len(existing.data) > 0:
-            supabase.table("search_results").update({
-                "raw_data": raw_data
-            }).eq("mobile_number", phone_number).execute()
-        else:
-            supabase.table("search_results").insert({
-                "mobile_number": phone_number,
-                "raw_data": raw_data,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            }).execute()
-        return True
-    except Exception as e:
-        print(f"Save cached result error: {e}")
-        return False
-
 def get_active_unlimited(user):
     unlimited_expiry_raw = user.get('unlimited_expiry') if user else None
     if not unlimited_expiry_raw:
@@ -816,9 +813,6 @@ def get_stats():
         revenue_resp = supabase.table("payment_claims").select("amount").eq("status", "success").execute()
         total_revenue = sum(p.get('amount', 0) for p in revenue_resp.data)
         
-        cache_resp = supabase.table("search_results").select("*", count="exact").execute()
-        cache_size = cache_resp.count
-        
         protected_resp = supabase.table("protected_numbers").select("*", count="exact").execute()
         protected_count = protected_resp.count
         
@@ -829,7 +823,6 @@ def get_stats():
             'banned_users': banned_users,
             'pending_payments': pending_payments_count,
             'total_revenue': total_revenue,
-            'cache_size': cache_size,
             'protected_count': protected_count
         }
     except Exception as e:
@@ -841,7 +834,6 @@ def get_stats():
             'banned_users': 0,
             'pending_payments': 0,
             'total_revenue': 0,
-            'cache_size': 0,
             'protected_count': 0
         }
 
@@ -1387,7 +1379,7 @@ def send_website_registration_reminder(user_id):
 • Exclusive Offers
 
 ━━━━━━━━━━━━━━━━━━━━
-💳 *Website Prices:* Number Lookup ₹3 | Telegram ₹7
+💳 *Website Prices:* Number Lookup ₹3 | Telegram ₹6
 
 🔐 *Your Telegram Credits are SAFE!* Website registration is optional but recommended for better experience.
 
@@ -1438,7 +1430,7 @@ def call_generic_lookup_api(url):
         print(f"[API CALL] {url}")
         
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/8.0",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/10.0",
             "Accept": "application/json,text/html,text/plain,*/*",
             "Connection": "close",
         }
@@ -1455,6 +1447,8 @@ def call_generic_lookup_api(url):
         
         try:
             data = response.json()
+            # Remove branding from the response
+            data = remove_branding(data)
             return data, None
         except:
             return {"raw_response": content}, None
@@ -1468,7 +1462,7 @@ def call_generic_lookup_api(url):
         return {"error": f"exception_{e}"}, None
 
 def call_number_lookup_api(phone):
-    """Call the Number lookup API"""
+    """Call the Number lookup API - Direct fetch, no cache"""
     try:
         url = NUMBER_LOOKUP_API_URL.format(number=phone)
         return call_generic_lookup_api(url)
@@ -1477,7 +1471,7 @@ def call_number_lookup_api(phone):
         return {"error": f"exception_{e}"}, None
 
 def call_telegram_lookup_api(username):
-    """Call the Telegram lookup API"""
+    """Call the Telegram lookup API - Direct fetch, no cache"""
     try:
         if not username.startswith('@'):
             username = '@' + username
@@ -1488,7 +1482,7 @@ def call_telegram_lookup_api(username):
         return {"error": f"exception_{e}"}, None
 
 def has_valid_number_results(result):
-    """True only when API/cache has at least one usable number result."""
+    """True only when API has at least one usable number result."""
     if not isinstance(result, dict):
         return False
     
@@ -1590,7 +1584,7 @@ def send_admin_alert(text, reply_markup=None, parse_mode="Markdown"):
 
 # ==================== FORMATTING FUNCTIONS ====================
 def format_lookup_result(result, phone, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format API result as JSON."""
+    """Format API result as clean JSON."""
     if not isinstance(result, dict):
         result = {"response": str(result)}
 
@@ -1630,7 +1624,7 @@ Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
     return output
 
 def format_telegram_lookup_result(result, username, user_id, unlimited_active=False, unlimited_expiry=None):
-    """Format the Telegram lookup result as JSON."""
+    """Format the Telegram lookup result as clean JSON."""
     if not isinstance(result, dict):
         result = {"response": str(result)}
     
@@ -1675,14 +1669,14 @@ def show_protection_menu(message):
 🛡️ *PROTECTION SERVICES*
 ━━━━━━━━━━━━━━━━━━
 
-📱 Number Protection → ₹99
-💬 Telegram Number Protection → ₹99
+📱 Number Protection → ₹59 (40% off)
+💬 Telegram Number Protection → ₹59 (40% off)
 
 Protected data will not be shown in lookup results.
 """
     markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(InlineKeyboardButton("📱 PROTECT NUMBER - ₹99", callback_data="plan_protect_number"))
-    markup.add(InlineKeyboardButton("💬 PROTECT TELEGRAM - ₹99", callback_data="plan_protect_telegram"))
+    markup.add(InlineKeyboardButton("📱 PROTECT NUMBER - ₹59", callback_data="plan_protect_number"))
+    markup.add(InlineKeyboardButton("💬 PROTECT TELEGRAM - ₹59", callback_data="plan_protect_telegram"))
     markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
     bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode="Markdown")
 
@@ -1727,25 +1721,25 @@ def process_protection_payment_input(message, plan_id):
 # ==================== PAYMENT HANDLERS ====================
 def show_credit_packs(message, user_id):
     packs_msg = f"""
-💎 *PREMIUM CREDIT STORE*
+💎 *PREMIUM CREDIT STORE - 40% OFF*
 ━━━━━━━━━━━━━━━━━━
 
 💰 *CREDIT PACKS (1 Credit = ₹1)*
-• 50 Credits → ₹50  
-• 105 Credits → ₹100 (Bonus 5)
-• 220 Credits → ₹200 (Bonus 20)
-• 550 Credits → ₹500 (Bonus 50)
-• 1150 Credits → ₹1000 (Bonus 150)
+• 50 Credits → ₹30 (was ₹50)
+• 105 Credits → ₹60 (was ₹100)
+• 220 Credits → ₹120 (was ₹200)
+• 550 Credits → ₹300 (was ₹500)
+• 1150 Credits → ₹600 (was ₹1000)
 
-🚀 *UNLIMITED PLANS*
-• 1 Hour Unlimited → ₹49
-• 1 Day Unlimited → ₹100
-• 7 Days Unlimited → ₹400
-• 30 Days Unlimited → ₹1200
+🚀 *UNLIMITED PLANS - 40% OFF*
+• 1 Hour Unlimited → ₹29 (was ₹49)
+• 1 Day Unlimited → ₹60 (was ₹100)
+• 7 Days Unlimited → ₹240 (was ₹400)
+• 30 Days Unlimited → ₹720 (was ₹1200)
 
-🛡️ *PROTECTION*
-• Number Protection → ₹99
-• Telegram Number Protection → ₹99
+🛡️ *PROTECTION - 40% OFF*
+• Number Protection → ₹59 (was ₹99)
+• Telegram Number Protection → ₹59 (was ₹99)
 
 ━━━━━━━━━━━━━━━━━━
 ✅ Permanent Credits NEVER EXPIRE
@@ -1782,7 +1776,7 @@ def handle_plan_selection(call):
 {prompt}
 {example}
 
-💰 Price: `₹99`
+💰 Price: `₹59` (40% off!)
 
 After this QR payment will be created.
 
@@ -1852,21 +1846,20 @@ def start(message):
 🔎 Total Searches: `{user.get('total_searches', 0) if user else 0}`
 
 ━━━━━━━━━━━━━━━━
-🎯 *FEATURES*
-• 📱 Number Lookup (5 Credits)
-• 💬 Telegram ID Lookup (10 Credits)
-• Fast Response
-• Secure Credits System
-• Unlimited Plans Available
-• Number Protection Service
+🎯 *NEW LOWER PRICES - 40% OFF*
+• 📱 Number Lookup: ₹3 (was ₹5)
+• 💬 Telegram Lookup: ₹6 (was ₹10)
+• 🛒 Credit Packs: 40% cheaper
+• 🚀 Unlimited Plans: 40% cheaper
+• 🛡️ Protection: 40% cheaper
 
 ━━━━━━━━━━━━━━━━
 🎁 New users get 10 free credits!
 
 🌐 *REGISTER ON WEBSITE FOR BETTER RATES:*
 👉 {WEBSITE_URL}
-• Number Lookup: ₹3 (vs ₹5 on bot)
-• Telegram Lookup: ₹7 (vs ₹10 on bot)
+• Number Lookup: ₹3
+• Telegram Lookup: ₹6
 • Automatic Payment Success
 • Instant Credit Addition
 
@@ -2064,12 +2057,12 @@ def text_handler(message):
 
     if text == "📱 NUMBER LOOKUP":
         user_states[user_id] = "awaiting_number"
-        bot.reply_to(message, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `5 credits` per search\nType ❌ CANCEL to abort", 
+        bot.reply_to(message, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `3 credits` per search (40% reduced!)\nType ❌ CANCEL to abort", 
                     reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
     
     elif text == "💬 TELEGRAM LOOKUP":
         user_states[user_id] = "awaiting_telegram_username"
-        bot.reply_to(message, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `10 credits` per search\n\n🛡️ After lookup, you can protect your Telegram ID for ₹99!\n\nType ❌ CANCEL to abort", 
+        bot.reply_to(message, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `6 credits` per search (40% reduced!)\n\n🛡️ After lookup, you can protect your Telegram ID for ₹59!\n\nType ❌ CANCEL to abort", 
                     reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
     
     elif text == "💎 MY CREDITS":
@@ -2092,24 +2085,24 @@ def text_handler(message):
 💰 *Credits:* `{total_credits}`{unlimited_text}
 🔎 *Used:* `{user.get('total_searches', 0) if user else 0}`
 ━━━━━━━━━━━━━━━━━━
-*📦 CREDIT PACKS (1 Credit = ₹1)*
-• 50 Credits → ₹50  
-• 105 Credits → ₹100 (Bonus 5)
-• 220 Credits → ₹200 (Bonus 20)
-• 550 Credits → ₹500 (Bonus 50)
-• 1150 Credits → ₹1000 (Bonus 150)
-*🚀 UNLIMITED PLANS*
-• 1 Hour → ₹49
-• 1 Day → ₹100
-• 7 Days → ₹400
-• 30 Days → ₹1200
-*🛡️ PROTECTION*
-• Number Protection → ₹99
-• Telegram Number Protection → ₹99
+*📦 CREDIT PACKS - 40% OFF*
+• 50 Credits → ₹30 (was ₹50)
+• 105 Credits → ₹60 (was ₹100)
+• 220 Credits → ₹120 (was ₹200)
+• 550 Credits → ₹300 (was ₹500)
+• 1150 Credits → ₹600 (was ₹1000)
+*🚀 UNLIMITED PLANS - 40% OFF*
+• 1 Hour → ₹29 (was ₹49)
+• 1 Day → ₹60 (was ₹100)
+• 7 Days → ₹240 (was ₹400)
+• 30 Days → ₹720 (was ₹1200)
+*🛡️ PROTECTION - 40% OFF*
+• Number Protection → ₹59 (was ₹99)
+• Telegram Protection → ₹59 (was ₹99)
 
 🌐 *Register on Website for Better Rates:*
 👉 {WEBSITE_URL}
-• Number: ₹3 | Telegram: ₹7
+• Number: ₹3 | Telegram: ₹6
 • Instant Payment Success
 """
         bot.reply_to(message, credits_msg, parse_mode='Markdown')
@@ -2216,13 +2209,13 @@ def callback_handler(call):
     
     elif call.data == "lookup":
         user_states[user_id] = "awaiting_number"
-        msg = bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `5 credits` per search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+        msg = bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `3 credits` per search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
         bot.register_next_step_handler(msg, process_lookup)
         bot.answer_callback_query(call.id)
     
     elif call.data == "telegram_lookup":
         user_states[user_id] = "awaiting_telegram_username"
-        msg = bot.send_message(call.message.chat.id, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `10 credits` per search\n\n🛡️ After lookup, you can protect your Telegram ID for ₹99!\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
+        msg = bot.send_message(call.message.chat.id, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `6 credits` per search\n\n🛡️ After lookup, you can protect your Telegram ID for ₹59!\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
         bot.register_next_step_handler(msg, process_telegram_lookup)
         bot.answer_callback_query(call.id)
     
@@ -2250,24 +2243,24 @@ def callback_handler(call):
 💰 *Credits:* `{total_credits}`{unlimited_text}
 🔎 *Used:* `{user.get('total_searches', 0) if user else 0}`
 ━━━━━━━━━━━━━━━━━━
-*📦 CREDIT PACKS (1 Credit = ₹1)*
-• 50 Credits → ₹50  
-• 105 Credits → ₹100 (Bonus 5)
-• 220 Credits → ₹200 (Bonus 20)
-• 550 Credits → ₹500 (Bonus 50)
-• 1150 Credits → ₹1000 (Bonus 150)
-*🚀 UNLIMITED PLANS*
-• 1 Hour → ₹49
-• 1 Day → ₹100
-• 7 Days → ₹400
-• 30 Days → ₹1200
-*🛡️ PROTECTION*
-• Number Protection → ₹99
-• Telegram Number Protection → ₹99
+*📦 CREDIT PACKS - 40% OFF*
+• 50 Credits → ₹30 (was ₹50)
+• 105 Credits → ₹60 (was ₹100)
+• 220 Credits → ₹120 (was ₹200)
+• 550 Credits → ₹300 (was ₹500)
+• 1150 Credits → ₹600 (was ₹1000)
+*🚀 UNLIMITED PLANS - 40% OFF*
+• 1 Hour → ₹29 (was ₹49)
+• 1 Day → ₹60 (was ₹100)
+• 7 Days → ₹240 (was ₹400)
+• 30 Days → ₹720 (was ₹1200)
+*🛡️ PROTECTION - 40% OFF*
+• Number Protection → ₹59 (was ₹99)
+• Telegram Protection → ₹59 (was ₹99)
 
 🌐 *Register on Website for Better Rates:*
 👉 {WEBSITE_URL}
-• Number: ₹3 | Telegram: ₹7
+• Number: ₹3 | Telegram: ₹6
 """
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🛒 BUY CREDITS", callback_data="buy"))
@@ -2355,27 +2348,27 @@ def callback_handler(call):
 1️⃣ Click TELEGRAM LOOKUP
 2️⃣ Enter @username
 3️⃣ Get Telegram ID and phone number
-4️⃣ Option to protect your Telegram ID for ₹99
+4️⃣ Option to protect your Telegram ID for ₹59
 
 ━━━━━━━━━━━━━━━━━━
 💎 *CREDIT SYSTEM (1 Credit = ₹1)*
 • New User: `10` free credits
 • Credits never expire
-• Number Lookup: 5 credits
-• Telegram Lookup: 10 credits
+• Number Lookup: 3 credits (was 5)
+• Telegram Lookup: 6 credits (was 10)
 • Unlimited plans available
-• Protection plans cost ₹99 each
+• Protection plans cost ₹59 each (was ₹99)
 
 ━━━━━━━━━━━━━━━━━━
 🛒 BUYING
-• Select plan
+• Select plan (40% cheaper!)
 • Scan QR, pay exact amount, then send screenshot
 • Admin verifies manually
 
 ━━━━━━━━━━━━━━━━━━
 🌐 *REGISTER ON WEBSITE*
 👉 {WEBSITE_URL}
-✅ Better rates: Number ₹3 | Telegram ₹7
+✅ Better rates: Number ₹3 | Telegram ₹6
 ✅ Automatic payment success
 ✅ Instant credit addition
 
@@ -2449,7 +2442,6 @@ def show_admin_panel(message):
 *📊 STATS*
 👥 Users: `{stats['total_users']}`
 🔍 Searches: `{stats['total_searches']}`
-💾 Cache: `{stats['cache_size']}`
 🛡️ Protected: `{stats['protected_count']}`
 *💎 CREDITS SYSTEM*
 💰 Total Credits: `{stats['total_credits']}`
@@ -2497,7 +2489,6 @@ Total Credits: `{stats['total_credits']}`
 📊 *USAGE*
 ━━━━━━━━━━━━━━━━━━
 Total Searches: `{stats['total_searches']}`
-Cache Size: `{stats['cache_size']}`
 Protected Numbers: `{stats['protected_count']}`
 ━━━━━━━━━━━━━━━━━━
 💰 *FINANCIAL*
@@ -2759,7 +2750,7 @@ def confirm_giveaway(call):
 
 # ==================== PROCESS LOOKUP FUNCTIONS ====================
 def process_lookup(message):
-    """Process number lookup with animated loading"""
+    """Process number lookup with animated loading - Direct API only, no cache"""
     user_id = message.from_user.id
     raw_phone = str(message.text or "").strip()
 
@@ -2800,7 +2791,7 @@ def process_lookup(message):
     unlimited_active, unlimited_expiry = get_active_unlimited(user)
     
     if total_credits < NUMBER_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.\n\n🌐 Register on website for cheaper rates: {WEBSITE_URL}", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
+        bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits (40% reduced!). Buy more credits or get an unlimited plan.\n\n🌐 Register on website for cheaper rates: {WEBSITE_URL}", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
         remove_active_session(user_id)
         return
     
@@ -2817,7 +2808,7 @@ This number is protected by the Number Protection Plan.
 
 The owner has purchased privacy protection. Details are hidden.
 
-You can also protect your number for ₹99!
+You can also protect your number for ₹59 (40% off)!
 """, reply_markup=markup, parse_mode='Markdown')
         remove_active_session(user_id)
         return
@@ -2832,36 +2823,7 @@ You can also protect your number for ₹99!
     
     time.sleep(1)
     
-    cached_result = get_cached_result(phone)
-    
-    if cached_result:
-        stop_animation.set()
-        animation_thread.join(timeout=1)
-        
-        if not unlimited_active:
-            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
-                remove_active_session(user_id)
-                return
-        
-        increment_total_searches(user_id)
-        
-        output = format_lookup_result(cached_result, phone, user_id, unlimited_active, unlimited_expiry)
-        
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton("🔍 NEW SEARCH", callback_data="lookup"),
-            InlineKeyboardButton("🏠 MENU", callback_data="main_menu")
-        )
-        markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
-        
-        send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
-        
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
-        
-        remove_active_session(user_id)
-        return
-    
+    # DIRECT API CALL - NO CACHE
     result = call_number_lookup_api(phone)
 
     stop_animation.set()
@@ -2893,7 +2855,6 @@ You can also protect your number for ₹99!
                 return
         
         increment_total_searches(user_id)
-        save_cached_result(phone, result)
         output = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
         
         markup = InlineKeyboardMarkup(row_width=2)
@@ -2940,7 +2901,7 @@ You can also protect your number for ₹99!
         remove_active_session(user_id)
 
 def process_telegram_lookup(message):
-    """Process Telegram username lookup with animated loading"""
+    """Process Telegram username lookup with animated loading - Direct API only, no cache"""
     user_id = message.from_user.id
     username_input = str(message.text or "").strip()
 
@@ -2960,7 +2921,7 @@ def process_telegram_lookup(message):
         username_clean = '@' + username_input
     
     if not re.match(r'^@?[a-zA-Z0-9_]{5,32}$', username_input):
-        bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `10 credits` per search", 
+        bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `6 credits` per search (40% reduced!)", 
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         remove_active_session(user_id)
         return
@@ -2979,7 +2940,7 @@ def process_telegram_lookup(message):
     unlimited_active, unlimited_expiry = get_active_unlimited(user)
     
     if total_credits < TELEGRAM_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Telegram Lookup costs `{TELEGRAM_LOOKUP_COST}` credits. Buy more credits or get an unlimited plan.\n\n🌐 Register on website for cheaper rates: {WEBSITE_URL}", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
+        bot.reply_to(message, f"❌ *Not enough credits!* Telegram Lookup costs `{TELEGRAM_LOOKUP_COST}` credits (40% reduced!). Buy more credits or get an unlimited plan.\n\n🌐 Register on website for cheaper rates: {WEBSITE_URL}", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
         remove_active_session(user_id)
         return
     
@@ -2993,6 +2954,7 @@ def process_telegram_lookup(message):
     
     time.sleep(1)
     
+    # DIRECT API CALL - NO CACHE
     result = call_telegram_lookup_api(username_input)
     
     stop_animation.set()
@@ -3035,7 +2997,7 @@ This Telegram ID is protected by the Telegram Number Protection Plan.
 
 The owner has purchased privacy protection. Details are hidden.
 
-You can also protect your Telegram ID for ₹99!
+You can also protect your Telegram ID for ₹59 (40% off)!
 """
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🛡️ PROTECT MY TELEGRAM", callback_data="plan_protect_telegram"))
@@ -3068,7 +3030,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 9.0.0"
+    return "TraceX Bot Running - Version 10.0.0 - 40% Price Reduction!"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -3086,20 +3048,23 @@ if __name__ == "__main__":
     print(f"Admin ID: {ADMIN_ID}")
     print(f"Admin: @{ADMIN_USERNAME}")
     print("=" * 60)
+    print("💰 PRICE REDUCTION - 40% OFF:")
+    print(f"   • Number Lookup: ₹{NUMBER_LOOKUP_COST} (was ₹5)")
+    print(f"   • Telegram Lookup: ₹{TELEGRAM_LOOKUP_COST} (was ₹10)")
+    print("   • Credit Packs: 40% cheaper")
+    print("   • Unlimited Plans: 40% cheaper")
+    print("   • Protection: 40% cheaper")
+    print("=" * 60)
     print("🔒 SECURITY FEATURES:")
     print("   • All sensitive data from environment variables")
     print("   • No hardcoded tokens or keys")
     print("   • BOT_TOKEN never exposed in source code")
-    print("   • ADMIN_ID from environment")
-    print("   • SUPABASE credentials from environment")
     print("=" * 60)
-    print("✅ New Features in v9.0.0:")
-    print("   • SECURE: All tokens from environment variables")
-    print("   • SECURE: No hardcoded credentials")
-    print("   • Clean, professional responses")
-    print("   • Improved error handling")
-    print("   • Better response formatting")
-    print("   • No bot getting stuck issues")
+    print("🚀 NEW FEATURES:")
+    print("   • Direct API fetch only (no database cache)")
+    print("   • Branding auto-removed from API responses")
+    print("   • Clean JSON output with proper formatting")
+    print("   • 40% reduction on all prices")
     print("=" * 60)
     
     keep_alive()
