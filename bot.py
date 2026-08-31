@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 10.0.0 - Direct API Fetch Only, 40% Price Reduction
+Version: 10.0.1 - Fixed API Response Handling
 """
 
 import os
@@ -56,29 +56,27 @@ SUPABASE_URL = get_env_var("SUPABASE_URL")
 SUPABASE_ANON_KEY = get_env_var("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_ROLE_KEY = get_env_var("SUPABASE_SERVICE_ROLE_KEY", required=False)
 
-# API URLs - from environment
-NUMBER_LOOKUP_API_URL = get_env_var("NUMBER_LOOKUP_API_URL", default="https://tracexdata-api.onrender.com/api/lookup?key=Tracexbotnumberapi&number={number}")
-TELEGRAM_LOOKUP_API_URL = get_env_var("TELEGRAM_LOOKUP_API_URL", default="https://tracexdata-api.onrender.com/api/lookup?key=Telegramlookupapifortracexbot&service=telegram&query={username}")
+# API URLs - from environment with defaults
+NUMBER_LOOKUP_API_URL = get_env_var("NUMBER_LOOKUP_API_URL", required=False, default="https://tracexdata-api.onrender.com/api/lookup?key=Tracexbotnumberapi&number={number}")
+TELEGRAM_LOOKUP_API_URL = get_env_var("TELEGRAM_LOOKUP_API_URL", required=False, default="https://tracexdata-api.onrender.com/api/lookup?key=Telegramlookupapifortracexbot&service=telegram&query={username}")
 
 # Payment QR - from environment
-PAYMENT_QR_IMAGE = get_env_var("PAYMENT_QR_IMAGE", default="payment_qr.png")
+PAYMENT_QR_IMAGE = get_env_var("PAYMENT_QR_IMAGE", required=False, default="payment_qr.png")
 
 # Website URLs - from environment
-WEBSITE_URL = get_env_var("WEBSITE_URL", default="https://tracexdata.online")
-WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", default="https://tracexdata.online/register")
+WEBSITE_URL = get_env_var("WEBSITE_URL", required=False, default="https://tracexdata.online")
+WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=False, default="https://tracexdata.online/register")
 
 # Group Links - from environment
-GROUP_LINK = get_env_var("GROUP_LINK", default="https://t.me/Gaurav_beni_0001")
+GROUP_LINK = get_env_var("GROUP_LINK", required=False, default="https://t.me/Gaurav_beni_0001")
 
 # Version
-BOT_VERSION = "10.0.0"
+BOT_VERSION = "10.0.1"
 
 # Costs - REDUCED BY 40%
-# Old: Number ₹5, Telegram ₹10
-# New: Number ₹3, Telegram ₹6 (40% reduction)
-NUMBER_LOOKUP_COST = int(get_env_var("NUMBER_LOOKUP_COST", default="3"))
-TELEGRAM_LOOKUP_COST = int(get_env_var("TELEGRAM_LOOKUP_COST", default="6"))
-MINIMUM_RECHARGE = int(get_env_var("MINIMUM_RECHARGE", default="30"))  # Reduced from ₹50 to ₹30
+NUMBER_LOOKUP_COST = int(get_env_var("NUMBER_LOOKUP_COST", required=False, default="3"))
+TELEGRAM_LOOKUP_COST = int(get_env_var("TELEGRAM_LOOKUP_COST", required=False, default="6"))
+MINIMUM_RECHARGE = int(get_env_var("MINIMUM_RECHARGE", required=False, default="30"))
 
 MAX_LOOKUP_RESULTS = 20
 TELEGRAM_SAFE_LIMIT = 3900
@@ -99,20 +97,16 @@ for channel in channels_str.split(','):
         })
 
 # Plan Configuration - REDUCED BY 40%
-# Old prices → New prices (40% reduction)
 PLAN_CONFIG = {
-    # Credit Packs - Reduced 40%
     "c50": {"amount": 30, "credits": 50, "unlimited_minutes": 0, "payment_for": "credits", "label": "50 Credits - ₹30"},
     "c100": {"amount": 60, "credits": 105, "unlimited_minutes": 0, "payment_for": "credits", "label": "105 Credits - ₹60 (Bonus 5)"},
     "c200": {"amount": 120, "credits": 220, "unlimited_minutes": 0, "payment_for": "credits", "label": "220 Credits - ₹120 (Bonus 20)"},
     "c500": {"amount": 300, "credits": 550, "unlimited_minutes": 0, "payment_for": "credits", "label": "550 Credits - ₹300 (Bonus 50)"},
     "c1000": {"amount": 600, "credits": 1150, "unlimited_minutes": 0, "payment_for": "credits", "label": "1150 Credits - ₹600 (Bonus 150)"},
-    # Unlimited Plans - Reduced 40%
     "u1h": {"amount": 29, "credits": 0, "unlimited_minutes": 60, "payment_for": "unlimited", "label": "1 Hour Unlimited - ₹29"},
     "u1d": {"amount": 60, "credits": 0, "unlimited_minutes": 1440, "payment_for": "unlimited", "label": "1 Day Unlimited - ₹60"},
     "u1w": {"amount": 240, "credits": 0, "unlimited_minutes": 10080, "payment_for": "unlimited", "label": "7 Days Unlimited - ₹240"},
     "u1m": {"amount": 720, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited - ₹720"},
-    # Protection - Reduced 40%
     "protect_number": {"amount": 59, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Number Protection - ₹59"},
     "protect_telegram": {"amount": 59, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_telegram", "label": "Telegram Protection - ₹59"},
 }
@@ -2829,6 +2823,14 @@ You can also protect your number for ₹59 (40% off)!
     stop_animation.set()
     animation_thread.join(timeout=1)
 
+    # Check if result is a tuple (data, error) or dict
+    if isinstance(result, tuple):
+        result_data, error = result
+        if error:
+            result = {"error": str(error)}
+        else:
+            result = result_data if result_data else {"error": "No data received"}
+
     if not result or result.get('error'):
         output = f"""
 ❌ *API RESPONSE*
@@ -2846,6 +2848,10 @@ You can also protect your number for ₹59 (40% off)!
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
         remove_active_session(user_id)
         return
+
+    # Ensure result is a dict for further processing
+    if not isinstance(result, dict):
+        result = {"response": str(result)}
 
     if has_valid_number_results(result):
         if not unlimited_active:
@@ -2960,6 +2966,14 @@ def process_telegram_lookup(message):
     stop_animation.set()
     animation_thread.join(timeout=1)
     
+    # Check if result is a tuple (data, error) or dict
+    if isinstance(result, tuple):
+        result_data, error = result
+        if error:
+            result = {"error": str(error)}
+        else:
+            result = result_data if result_data else {"error": "No data received"}
+
     if not result or result.get('error'):
         output = f"""
 ❌ *API RESPONSE*
@@ -2977,6 +2991,10 @@ def process_telegram_lookup(message):
         record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
         remove_active_session(user_id)
         return
+    
+    # Ensure result is a dict for further processing
+    if not isinstance(result, dict):
+        result = {"response": str(result)}
     
     telegram_id = None
     if isinstance(result, dict):
@@ -3030,7 +3048,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 10.0.0 - 40% Price Reduction!"
+    return "TraceX Bot Running - Version 10.0.1 - 40% Price Reduction!"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -3065,6 +3083,7 @@ if __name__ == "__main__":
     print("   • Branding auto-removed from API responses")
     print("   • Clean JSON output with proper formatting")
     print("   • 40% reduction on all prices")
+    print("   • Fixed tuple response handling")
     print("=" * 60)
     
     keep_alive()
