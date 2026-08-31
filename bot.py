@@ -131,7 +131,7 @@ def create_client(url, key):
 Client = _SupabaseLiteClient
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "8525568503:AAHjydzj4bXdjVcS9c5jiL3CghFDfBePXXw"
+BOT_TOKEN = "8525568503:AAEdmBjRdTxlSB52jZ41FZ0Hk9vSC6GbM80"
 ADMIN_ID = 7850023357
 ADMIN_CHANNEL_ID = -1003743686626
 ADMIN_USERNAME = r"@gaurav\_beniwal\_0001"
