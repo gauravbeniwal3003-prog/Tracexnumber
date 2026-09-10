@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 11.0.6 - Fixed Animation Stuck Issue
+Version: 11.0.7 - Fixed Searching Stuck Issue (Complete Rewrite of Lookup Handlers)
 """
 
 import os
@@ -57,7 +57,7 @@ WEBSITE_URL = get_env_var("WEBSITE_URL", required=False, default="https://tracex
 WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=False, default="https://tracexdata.online/register")
 GROUP_LINK = get_env_var("GROUP_LINK", required=False, default="https://t.me/Gaurav_beni_0001")
 
-BOT_VERSION = "11.0.6"
+BOT_VERSION = "11.0.7"
 NUMBER_LOOKUP_COST = int(get_env_var("NUMBER_LOOKUP_COST", required=False, default="3"))
 TELEGRAM_LOOKUP_COST = int(get_env_var("TELEGRAM_LOOKUP_COST", required=False, default="6"))
 MINIMUM_RECHARGE = int(get_env_var("MINIMUM_RECHARGE", required=False, default="30"))
@@ -264,26 +264,42 @@ def update_loading_animation(chat_id, message_id, stage):
     dot = dots[stage % 4]
     try:
         bot.edit_message_text(f"🔍 *Searching{dot}*", chat_id, message_id, parse_mode='Markdown')
+        return True
     except Exception as e:
-        # Ignore "message is not modified" errors silently
-        if "message is not modified" in str(e):
-            pass
+        err = str(e).lower()
+        if "message is not modified" in err:
+            return True
+        elif "message to edit not found" in err or "message can't be edited" in err or "message identifier is not specified" in err:
+            return False  # signal thread to stop
         else:
             print(f"Animation update error: {e}")
+            return True
 
 def animated_loading(chat_id, message_id, stop_event):
     stage = 0
     while not stop_event.is_set():
         try:
-            update_loading_animation(chat_id, message_id, stage)
+            should_continue = update_loading_animation(chat_id, message_id, stage)
+            if not should_continue:
+                return
             stage += 1
-            time.sleep(0.5)
+            # Sleep in small chunks so stop_event is checked faster
+            for _ in range(5):
+                if stop_event.is_set():
+                    return
+                time.sleep(0.1)
         except Exception as e:
-            # If the message was deleted or bot can't edit, break out
-            if "message to edit not found" in str(e) or "can't edit message" in str(e):
-                break
-            print(f"Animation thread error: {e}")
-            time.sleep(0.5)
+            print(f"Animation thread stopping: {e}")
+            return
+
+def stop_animation_safely(stop_event, thread):
+    """Stop animation thread and wait for it to finish."""
+    try:
+        stop_event.set()
+        if thread and thread.is_alive():
+            thread.join(timeout=3)
+    except Exception as e:
+        print(f"Stop animation error: {e}")
 
 # ==================== UI COMPONENTS ====================
 def footer():
@@ -1437,14 +1453,15 @@ def send_bulk_reminders():
 
 # ==================== API FUNCTIONS ====================
 def call_generic_lookup_api(url):
+    """FIXED: Hard timeout (connect=10s, read=25s) so it never hangs forever."""
     try:
         print(f"[API CALL] {url}")
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0.7",
             "Accept": "application/json,text/html,text/plain,*/*",
             "Connection": "close",
         }
-        response = requests.get(url, headers=headers, timeout=30)
+        response = requests.get(url, headers=headers, timeout=(10, 25))
         print(f"[API CALL] Response Status: {response.status_code}")
         if response.status_code != 200:
             return {"error": f"HTTP {response.status_code}", "raw": response.text[:500]}, None
@@ -1455,11 +1472,13 @@ def call_generic_lookup_api(url):
             data = response.json()
             data = remove_branding(data)
             return data, None
-        except:
+        except Exception:
             return {"raw_response": content}, None
     except requests.exceptions.Timeout:
+        print("[API CALL] Timeout!")
         return {"error": "timeout"}, None
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as ce:
+        print(f"[API CALL] Connection error: {ce}")
         return {"error": "connection_error"}, None
     except Exception as e:
         print(f"[API CALL] Exception: {e}")
@@ -1487,27 +1506,22 @@ def call_telegram_lookup_api(username):
 def has_valid_number_results(result):
     if not isinstance(result, dict):
         return False
-    
     if result.get('error'):
         return False
-    
-    no_data_phrases = ['no data found', 'no result', 'not found', 'no query found', 
+    no_data_phrases = ['no data found', 'no result', 'not found', 'no query found',
                        'no data', 'no information', 'unable to find', 'not available']
-    
     raw = result.get('raw_response')
     if isinstance(raw, str):
         raw_lower = raw.lower()
         for phrase in no_data_phrases:
             if phrase in raw_lower:
                 return False
-    
     msg = result.get('message')
     if isinstance(msg, str):
         msg_lower = msg.lower()
         for phrase in no_data_phrases:
             if phrase in msg_lower:
                 return False
-    
     if 'results' in result:
         api_results = result.get('results')
         if isinstance(api_results, dict):
@@ -1523,17 +1537,14 @@ def has_valid_number_results(result):
                     for v in item.values():
                         if v and str(v).strip() and str(v).strip().lower() not in ['none', 'null', 'n/a', '']:
                             return True
-    
-    valid_fields = ['name', 'mobile', 'phone', 'email', 'address', 'city', 'state', 'country', 
+    valid_fields = ['name', 'mobile', 'phone', 'email', 'address', 'city', 'state', 'country',
                     'telegram_id', 'user_id', 'id', 'username', 'first_name', 'last_name']
-    
     for field in valid_fields:
         value = result.get(field)
         if value:
             str_value = str(value).strip()
             if str_value and str_value.lower() not in ['none', 'null', 'n/a', '', 'no data', 'not found', 'no result']:
                 return True
-    
     for key, value in result.items():
         if key in ['results', 'data', 'response']:
             continue
@@ -1545,33 +1556,27 @@ def has_valid_number_results(result):
                 if isinstance(item, dict) and item:
                     if has_valid_number_results(item):
                         return True
-    
     return False
 
 def has_valid_telegram_results(result):
     if not isinstance(result, dict):
         return False
-    
     if result.get('error'):
         return False
-    
-    no_data_phrases = ['no data found', 'no result', 'not found', 'no query found', 
+    no_data_phrases = ['no data found', 'no result', 'not found', 'no query found',
                        'no data', 'no information', 'unable to find', 'not available']
-    
     raw = result.get('raw_response')
     if isinstance(raw, str):
         raw_lower = raw.lower()
         for phrase in no_data_phrases:
             if phrase in raw_lower:
                 return False
-    
     msg = result.get('message')
     if isinstance(msg, str):
         msg_lower = msg.lower()
         for phrase in no_data_phrases:
             if phrase in msg_lower:
                 return False
-    
     if 'results' in result:
         api_results = result.get('results')
         if isinstance(api_results, dict):
@@ -1580,7 +1585,6 @@ def has_valid_telegram_results(result):
                 for key, value in telegram_match.items():
                     if value and str(value).strip() and str(value).strip().lower() not in ['none', 'null', 'n/a', '']:
                         return True
-            
             for key, value in api_results.items():
                 if isinstance(value, dict):
                     for k, v in value.items():
@@ -1588,40 +1592,33 @@ def has_valid_telegram_results(result):
                             return True
                 elif value and str(value).strip() and str(value).strip().lower() not in ['none', 'null', 'n/a', '']:
                     return True
-    
-    valid_fields = ['telegram_id', 'user_id', 'id', 'username', 'first_name', 'last_name', 
+    valid_fields = ['telegram_id', 'user_id', 'id', 'username', 'first_name', 'last_name',
                     'phone', 'mobile', 'phone_number', 'name']
-    
     for field in valid_fields:
         value = result.get(field)
         if value:
             str_value = str(value).strip()
             if str_value and str_value.lower() not in ['none', 'null', 'n/a', '', 'no data', 'not found', 'no result']:
                 return True
-    
     return False
 
 def is_no_data_response(result):
     if not isinstance(result, dict):
         return False
-    
-    no_data_phrases = ['no data found', 'no result', 'not found', 'no query found', 
+    no_data_phrases = ['no data found', 'no result', 'not found', 'no query found',
                        'no data', 'no information', 'unable to find', 'not available']
-    
     raw = result.get('raw_response')
     if isinstance(raw, str):
         raw_lower = raw.lower()
         for phrase in no_data_phrases:
             if phrase in raw_lower:
                 return True
-    
     msg = result.get('message')
     if isinstance(msg, str):
         msg_lower = msg.lower()
         for phrase in no_data_phrases:
             if phrase in msg_lower:
                 return True
-    
     if 'results' in result:
         api_results = result.get('results')
         if isinstance(api_results, dict):
@@ -1639,7 +1636,6 @@ def is_no_data_response(result):
                 return True
         elif isinstance(api_results, list) and not api_results:
             return True
-    
     return False
 
 def split_long_text(text, limit=TELEGRAM_SAFE_LIMIT):
@@ -2146,6 +2142,15 @@ def cancel_command(message):
     remove_active_session(user_id)
     bot.reply_to(message, "❌ Cancelled. Use /start for main menu.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
 
+@bot.message_handler(commands=['resetcooldown'])
+def reset_cooldown(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+    user_cooldown.clear()
+    with active_sessions_lock:
+        active_sessions.clear()
+    bot.reply_to(message, "✅ Cooldowns & active sessions cleared!")
+
 @bot.message_handler(commands=['maintenance'])
 def toggle_maintenance(message):
     global MAINTENANCE_MODE
@@ -2309,11 +2314,11 @@ def text_handler(message):
         return
     if text == "📱 NUMBER LOOKUP":
         user_states[user_id] = "awaiting_number"
-        bot.reply_to(message, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `3 credits` per search (40% reduced!)\nType ❌ CANCEL to abort", 
+        bot.reply_to(message, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `3 credits` per search (40% reduced!)\nType ❌ CANCEL to abort",
                     reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
     elif text == "💬 TELEGRAM LOOKUP":
         user_states[user_id] = "awaiting_telegram_username"
-        bot.reply_to(message, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `6 credits` per search (40% reduced!)\n\n🛡️ After lookup, you can protect your Telegram ID for ₹59!\n\nType ❌ CANCEL to abort", 
+        bot.reply_to(message, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `6 credits` per search (40% reduced!)\n\n🛡️ After lookup, you can protect your Telegram ID for ₹59!\n\nType ❌ CANCEL to abort",
                     reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
     elif text == "💎 MY CREDITS":
         total_credits = get_total_credits(user_id)
@@ -2449,13 +2454,11 @@ def callback_handler(call):
         bot.answer_callback_query(call.id, "Cancelled")
     elif call.data == "lookup":
         user_states[user_id] = "awaiting_number"
-        msg = bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `3 credits` per search\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
-        bot.register_next_step_handler(msg, process_lookup)
+        bot.send_message(call.message.chat.id, "📱 *Enter 10-digit number:*\n\n`Example: 9876543210`\n\n💎 Cost: `3 credits` per search\nType ❌ CANCEL to abort", reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
         bot.answer_callback_query(call.id)
     elif call.data == "telegram_lookup":
         user_states[user_id] = "awaiting_telegram_username"
-        msg = bot.send_message(call.message.chat.id, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `6 credits` per search\n\n🛡️ After lookup, you can protect your Telegram ID for ₹59!\n\nType /cancel to abort", reply_markup=cancel_button(), parse_mode='Markdown')
-        bot.register_next_step_handler(msg, process_telegram_lookup)
+        bot.send_message(call.message.chat.id, "💬 *Enter Telegram Username:*\n\n`Example: @username` or `username`\n\n💎 Cost: `6 credits` per search\n\n🛡️ After lookup, you can protect your Telegram ID for ₹59!\n\nType ❌ CANCEL to abort", reply_markup=get_cancel_keyboard(), parse_mode='Markdown')
         bot.answer_callback_query(call.id)
     elif call.data in ["protect", "protection_menu"]:
         show_protection_menu(call.message)
@@ -3010,45 +3013,67 @@ def confirm_giveaway(call):
 
 # ==================== FIXED: PROCESS LOOKUP FUNCTIONS ====================
 def process_lookup(message):
+    """
+    FIXED v11.0.7:
+    - Full try/except/finally so user is NEVER stuck on 'Searching...'
+    - Animation thread stopped BEFORE message is edited
+    - Active session always removed at the end
+    - API call has hard timeout via (connect, read) tuple
+    """
     user_id = message.from_user.id
     raw_phone = str(message.text or "").strip()
+
     if raw_phone == "❌ CANCEL" or raw_phone == "/cancel":
         user_states.pop(user_id, None)
         remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
+
     if user_states.get(user_id) != "awaiting_number":
         return
+
     user_states.pop(user_id, None)
     phone = normalize_indian_mobile(raw_phone)
+
     if not phone:
-        bot.reply_to(message, "❌ *Invalid number!*\n\nEnter Indian mobile number.\nExamples: `9876543210` or `+919876543210`", 
+        bot.reply_to(message, "❌ *Invalid number!*\n\nEnter Indian mobile number.\nExamples: `9876543210` or `+919876543210`",
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         remove_active_session(user_id)
         return
+
     if is_active_session(user_id):
-        bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result before starting another.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        remove_active_session(user_id)
+        bot.reply_to(message, "⏳ *One search already running!*\n\nPlease wait for current search result.",
+                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
+
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            remove_active_session(user_id)
+            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*",
+                         reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
+
     add_active_session(user_id)
-    user = get_user(user_id)
-    total_credits = get_total_credits(user_id)
-    unlimited_active, unlimited_expiry = get_active_unlimited(user)
-    if total_credits < NUMBER_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits (40% reduced!). Buy more credits or get an unlimited plan.\n\n🌐 Register on website for cheaper rates: {WEBSITE_URL}", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
-        remove_active_session(user_id)
-        return
-    if is_number_protected(phone):
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🛡️ PROTECT MY NUMBER", callback_data="protect"))
-        markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
-        bot.reply_to(message, f"""
+
+    loading_msg = None
+    stop_animation = threading.Event()
+    animation_thread = None
+
+    try:
+        user = get_user(user_id)
+        total_credits = get_total_credits(user_id)
+        unlimited_active, unlimited_expiry = get_active_unlimited(user)
+
+        if total_credits < NUMBER_LOOKUP_COST and not unlimited_active:
+            bot.reply_to(message, f"❌ *Not enough credits!* Number Lookup costs `{NUMBER_LOOKUP_COST}` credits (40% reduced!). Buy more credits or get an unlimited plan.\n\n🌐 Register on website for cheaper rates: {WEBSITE_URL}",
+                         reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
+            return
+
+        if is_number_protected(phone):
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🛡️ PROTECT MY NUMBER", callback_data="protect"))
+            markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
+            bot.reply_to(message, f"""
 🛡️ *PROTECTED NUMBER*
 
 📱 `{phone}`
@@ -3059,21 +3084,31 @@ The owner has purchased privacy protection. Details are hidden.
 
 You can also protect your number for ₹59 (40% off)!
 """, reply_markup=markup, parse_mode='Markdown')
-        remove_active_session(user_id)
-        return
-    user_cooldown[user_id] = time.time()
-    loading_msg = bot.reply_to(message, "🔍 *Searching*", parse_mode='Markdown')
-    stop_animation = threading.Event()
-    animation_thread = threading.Thread(target=animated_loading, args=(message.chat.id, loading_msg.message_id, stop_animation))
-    animation_thread.daemon = True
-    animation_thread.start()
-    time.sleep(1)
-    result = call_number_lookup_api(phone)
-    stop_animation.set()
-    animation_thread.join(timeout=2)
-    
-    if is_no_data_response(result):
-        output = f"""
+            return
+
+        user_cooldown[user_id] = time.time()
+        loading_msg = bot.reply_to(message, "🔍 *Searching*", parse_mode='Markdown')
+
+        animation_thread = threading.Thread(
+            target=animated_loading,
+            args=(message.chat.id, loading_msg.message_id, stop_animation),
+            daemon=True
+        )
+        animation_thread.start()
+
+        time.sleep(0.8)
+
+        try:
+            result = call_number_lookup_api(phone)
+        except Exception as api_err:
+            print(f"Number lookup API exception: {api_err}")
+            result = {"error": f"api_exception_{api_err}"}
+
+        # ✅ CRITICAL: stop animation BEFORE editing message
+        stop_animation_safely(stop_animation, animation_thread)
+
+        if is_no_data_response(result):
+            output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
 
@@ -3085,13 +3120,12 @@ Please verify the number and try again.
 💎 Credits NOT deducted
 {footer()}
 """
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
-        remove_active_session(user_id)
-        return
-    
-    if not result or result.get('error'):
-        output = f"""
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
+            return
+
+        if not result or result.get('error'):
+            output = f"""
 ❌ *API RESPONSE*
 ━━━━━━━━━━━━━━━━━━
 
@@ -3103,40 +3137,36 @@ Please verify the number and try again.
 💎 Credits NOT deducted
 {footer()}
 """
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
-        remove_active_session(user_id)
-        return
-    
-    if not isinstance(result, dict):
-        result = {"response": str(result)}
-    
-    if has_valid_number_results(result):
-        if not unlimited_active:
-            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
-                remove_active_session(user_id)
-                return
-        increment_total_searches(user_id)
-        output = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            InlineKeyboardButton("🔍 NEW SEARCH", callback_data="lookup"),
-            InlineKeyboardButton("🏠 MENU", callback_data="main_menu")
-        )
-        markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
-        send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
-        remove_active_session(user_id)
-    else:
-        if not unlimited_active:
-            if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
-                safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
-                remove_active_session(user_id)
-                return
-        increment_total_searches(user_id)
-        updated_total = get_total_credits(user_id)
-        output = f"""
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=0)
+            return
+
+        if not isinstance(result, dict):
+            result = {"response": str(result)}
+
+        if has_valid_number_results(result):
+            if not unlimited_active:
+                if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
+                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
+                    return
+            increment_total_searches(user_id)
+            output = format_lookup_result(result, phone, user_id, unlimited_active, unlimited_expiry)
+            markup = InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                InlineKeyboardButton("🔍 NEW SEARCH", callback_data="lookup"),
+                InlineKeyboardButton("🏠 MENU", callback_data="main_menu")
+            )
+            markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
+            send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=True, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
+        else:
+            if not unlimited_active:
+                if not deduct_credits(user_id, NUMBER_LOOKUP_COST):
+                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
+                    return
+            increment_total_searches(user_id)
+            updated_total = get_total_credits(user_id)
+            output = f"""
 🔍 *NUMBER LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━
 
@@ -3150,56 +3180,105 @@ Please verify the number and try again.
 💎 *Credits Left:* `{updated_total}`
 {footer()}
 """
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, phone, found=False, lookup_type="number", credits_used=NUMBER_LOOKUP_COST if not unlimited_active else 0)
+
+    except Exception as e:
+        print(f"process_lookup critical error: {e}")
+        try:
+            if loading_msg:
+                safe_edit_message(
+                    message.chat.id,
+                    loading_msg.message_id,
+                    f"❌ *Search failed!*\n\nError: `{str(e)[:100]}`\n\nCredits NOT deducted.\nPlease try again.",
+                    parse_mode='Markdown'
+                )
+            else:
+                bot.reply_to(message, f"❌ *Search failed!* Please try again.\nError: `{str(e)[:100]}`",
+                             parse_mode='Markdown')
+        except Exception as inner:
+            print(f"Error notifying user: {inner}")
+
+    finally:
+        stop_animation_safely(stop_animation, animation_thread)
         remove_active_session(user_id)
 
+
 def process_telegram_lookup(message):
+    """
+    FIXED v11.0.7: Same safety pattern as process_lookup.
+    """
     user_id = message.from_user.id
     username_input = str(message.text or "").strip()
+
     if username_input == "❌ CANCEL" or username_input == "/cancel":
         user_states.pop(user_id, None)
         remove_active_session(user_id)
         bot.reply_to(message, "❌ Cancelled!", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
         return
+
     if user_states.get(user_id) != "awaiting_telegram_username":
         return
+
     user_states.pop(user_id, None)
     username_clean = username_input
     if not username_input.startswith('@'):
         username_clean = '@' + username_input
+
     if not re.match(r'^@?[a-zA-Z0-9_]{5,32}$', username_input):
-        bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `6 credits` per search (40% reduced!)", 
+        bot.reply_to(message, "❌ *Invalid Telegram Username!*\n\nEnter a valid Telegram username.\nExamples: `@username` or `username`\n\n💎 Cost: `6 credits` per search (40% reduced!)",
                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        remove_active_session(user_id)
         return
+
+    if is_active_session(user_id):
+        bot.reply_to(message, "⏳ *One search already running!* Please wait.",
+                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        return
+
     if user_id in user_cooldown:
         if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
             wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            remove_active_session(user_id)
+            bot.reply_to(message, f"⏳ *Please wait {wait_time} seconds*",
+                         reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
             return
+
     add_active_session(user_id)
-    user = get_user(user_id)
-    total_credits = get_total_credits(user_id)
-    unlimited_active, unlimited_expiry = get_active_unlimited(user)
-    if total_credits < TELEGRAM_LOOKUP_COST and not unlimited_active:
-        bot.reply_to(message, f"❌ *Not enough credits!* Telegram Lookup costs `{TELEGRAM_LOOKUP_COST}` credits (40% reduced!). Buy more credits or get an unlimited plan.\n\n🌐 Register on website for cheaper rates: {WEBSITE_URL}", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
-        remove_active_session(user_id)
-        return
-    user_cooldown[user_id] = time.time()
-    loading_msg = bot.reply_to(message, "🔍 *Searching*", parse_mode='Markdown')
+
+    loading_msg = None
     stop_animation = threading.Event()
-    animation_thread = threading.Thread(target=animated_loading, args=(message.chat.id, loading_msg.message_id, stop_animation))
-    animation_thread.daemon = True
-    animation_thread.start()
-    time.sleep(1)
-    result = call_telegram_lookup_api(username_input)
-    stop_animation.set()
-    animation_thread.join(timeout=2)
-    
-    if is_no_data_response(result):
-        output = f"""
+    animation_thread = None
+
+    try:
+        user = get_user(user_id)
+        total_credits = get_total_credits(user_id)
+        unlimited_active, unlimited_expiry = get_active_unlimited(user)
+
+        if total_credits < TELEGRAM_LOOKUP_COST and not unlimited_active:
+            bot.reply_to(message, f"❌ *Not enough credits!* Telegram Lookup costs `{TELEGRAM_LOOKUP_COST}` credits (40% reduced!). Buy more credits or get an unlimited plan.\n\n🌐 Register on website for cheaper rates: {WEBSITE_URL}",
+                         reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
+            return
+
+        user_cooldown[user_id] = time.time()
+        loading_msg = bot.reply_to(message, "🔍 *Searching*", parse_mode='Markdown')
+
+        animation_thread = threading.Thread(
+            target=animated_loading,
+            args=(message.chat.id, loading_msg.message_id, stop_animation),
+            daemon=True
+        )
+        animation_thread.start()
+        time.sleep(0.8)
+
+        try:
+            result = call_telegram_lookup_api(username_input)
+        except Exception as api_err:
+            print(f"Telegram lookup API exception: {api_err}")
+            result = {"error": f"api_exception_{api_err}"}
+
+        stop_animation_safely(stop_animation, animation_thread)
+
+        if is_no_data_response(result):
+            output = f"""
 ❌ *NO DATA FOUND*
 ━━━━━━━━━━━━━━━━━━
 
@@ -3211,13 +3290,12 @@ Please verify the username and try again.
 💎 Credits NOT deducted
 {footer()}
 """
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
-        remove_active_session(user_id)
-        return
-    
-    if not result or result.get('error'):
-        output = f"""
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
+            return
+
+        if not result or result.get('error'):
+            output = f"""
 ❌ *API RESPONSE*
 ━━━━━━━━━━━━━━━━━━
 
@@ -3229,24 +3307,23 @@ Please verify the username and try again.
 💎 Credits NOT deducted
 {footer()}
 """
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
-        remove_active_session(user_id)
-        return
-    
-    if not isinstance(result, dict):
-        result = {"response": str(result)}
-    
-    telegram_id = None
-    if isinstance(result, dict):
-        results = result.get('results', {})
-        if isinstance(results, dict):
-            telegram_match = results.get('Telegram Match', {})
-            if isinstance(telegram_match, dict):
-                telegram_id = telegram_match.get('telegram_id')
-    
-    if telegram_id and is_telegram_protected(telegram_id):
-        output = f"""
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
+            return
+
+        if not isinstance(result, dict):
+            result = {"response": str(result)}
+
+        telegram_id = None
+        if isinstance(result, dict):
+            results = result.get('results', {})
+            if isinstance(results, dict):
+                telegram_match = results.get('Telegram Match', {})
+                if isinstance(telegram_match, dict):
+                    telegram_id = telegram_match.get('telegram_id')
+
+        if telegram_id and is_telegram_protected(telegram_id):
+            output = f"""
 🛡️ *PROTECTED TELEGRAM ID*
 
 🔍 Username: `{username_clean}`
@@ -3258,35 +3335,31 @@ The owner has purchased privacy protection. Details are hidden.
 
 You can also protect your Telegram ID for ₹59 (40% off)!
 """
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🛡️ PROTECT MY TELEGRAM", callback_data="plan_protect_telegram"))
-        markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
-        remove_active_session(user_id)
-        return
-    
-    if has_valid_telegram_results(result):
-        if not unlimited_active:
-            if not deduct_credits(user_id, TELEGRAM_LOOKUP_COST):
-                safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
-                remove_active_session(user_id)
-                return
-        increment_total_searches(user_id)
-        output = format_telegram_lookup_result(result, username_clean, user_id, unlimited_active, unlimited_expiry)
-        markup = telegram_lookup_protection_markup()
-        send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=True, lookup_type="telegram", credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0)
-        remove_active_session(user_id)
-    else:
-        if not unlimited_active:
-            if not deduct_credits(user_id, TELEGRAM_LOOKUP_COST):
-                safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
-                remove_active_session(user_id)
-                return
-        increment_total_searches(user_id)
-        updated_total = get_total_credits(user_id)
-        output = f"""
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🛡️ PROTECT MY TELEGRAM", callback_data="plan_protect_telegram"))
+            markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=0)
+            return
+
+        if has_valid_telegram_results(result):
+            if not unlimited_active:
+                if not deduct_credits(user_id, TELEGRAM_LOOKUP_COST):
+                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
+                    return
+            increment_total_searches(user_id)
+            output = format_telegram_lookup_result(result, username_clean, user_id, unlimited_active, unlimited_expiry)
+            markup = telegram_lookup_protection_markup()
+            send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=markup, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=True, lookup_type="telegram", credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0)
+        else:
+            if not unlimited_active:
+                if not deduct_credits(user_id, TELEGRAM_LOOKUP_COST):
+                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credits. Please try again.*", parse_mode='Markdown')
+                    return
+            increment_total_searches(user_id)
+            updated_total = get_total_credits(user_id)
+            output = f"""
 🔍 *TELEGRAM LOOKUP RESULT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3300,8 +3373,27 @@ You can also protect your Telegram ID for ₹59 (40% off)!
 💎 *Credits Left:* `{updated_total}`
 {footer()}
 """
-        safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-        record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0)
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, username_input, found=False, lookup_type="telegram", credits_used=TELEGRAM_LOOKUP_COST if not unlimited_active else 0)
+
+    except Exception as e:
+        print(f"process_telegram_lookup critical error: {e}")
+        try:
+            if loading_msg:
+                safe_edit_message(
+                    message.chat.id,
+                    loading_msg.message_id,
+                    f"❌ *Search failed!*\n\nError: `{str(e)[:100]}`\n\nCredits NOT deducted.\nPlease try again.",
+                    parse_mode='Markdown'
+                )
+            else:
+                bot.reply_to(message, f"❌ *Search failed!* Please try again.",
+                             parse_mode='Markdown')
+        except Exception as inner:
+            print(f"Error notifying user: {inner}")
+
+    finally:
+        stop_animation_safely(stop_animation, animation_thread)
         remove_active_session(user_id)
 
 # ==================== FLASK WEBHOOK ====================
@@ -3309,7 +3401,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 11.0.6 - Fixed Animation Stuck Issue!"
+    return "TraceX Bot Running - Version 11.0.7 - Fixed Searching Stuck Issue!"
 
 def keep_alive():
     def run():
@@ -3333,12 +3425,15 @@ if __name__ == "__main__":
     print("   • Unlimited Plans: 40% cheaper")
     print("   • Protection: 40% cheaper")
     print("=" * 60)
-    print("🔍 FIXES IN v11.0.6:")
-    print("   • Fixed animation getting stuck on 'Searching'")
-    print("   • Better error handling in animation thread")
-    print("   • Proper thread cleanup")
+    print("🔍 FIXES IN v11.0.7:")
+    print("   • Full try/except/finally around lookup handlers")
+    print("   • Animation thread stopped BEFORE message edit")
+    print("   • Hard timeout (connect=10s, read=25s) on API calls")
+    print("   • Active session always cleaned in finally block")
+    print("   • User always gets error message if search fails")
+    print("   • /resetcooldown admin command added")
     print("=" * 60)
-    
+
     keep_alive()
     print("✅ Flask server started on port 8080")
     threading.Thread(target=send_daily_search_report_loop, daemon=True).start()
@@ -3349,12 +3444,12 @@ if __name__ == "__main__":
     print("✅ Referral count reset scheduler started (monthly on 1st)")
     print("✅ Bot is running! Press Ctrl+C to stop.")
     print("=" * 60)
-    
+
     def signal_handler(sig, frame):
         print("\n🛑 Bot stopped by user")
         sys.exit(0)
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     try:
         bot.remove_webhook()
         time.sleep(1)
@@ -3363,7 +3458,7 @@ if __name__ == "__main__":
 
     while True:
         try:
-            bot.infinity_polling(timeout=60, skip_pending=True)
+            bot.infinity_polling(timeout=30, skip_pending=True)
         except Exception as e:
             print(f"Polling error: {e}")
             if "409" in str(e) or "getUpdates" in str(e):
