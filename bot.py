@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 11.0.7 - Fixed Searching Stuck Issue (Complete Rewrite of Lookup Handlers)
+Version: 11.0.8 - Fixed tuple unpacking bug + Searching stuck issue
 """
 
 import os
@@ -57,7 +57,7 @@ WEBSITE_URL = get_env_var("WEBSITE_URL", required=False, default="https://tracex
 WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=False, default="https://tracexdata.online/register")
 GROUP_LINK = get_env_var("GROUP_LINK", required=False, default="https://t.me/Gaurav_beni_0001")
 
-BOT_VERSION = "11.0.7"
+BOT_VERSION = "11.0.8"
 NUMBER_LOOKUP_COST = int(get_env_var("NUMBER_LOOKUP_COST", required=False, default="3"))
 TELEGRAM_LOOKUP_COST = int(get_env_var("TELEGRAM_LOOKUP_COST", required=False, default="6"))
 MINIMUM_RECHARGE = int(get_env_var("MINIMUM_RECHARGE", required=False, default="30"))
@@ -1451,23 +1451,23 @@ def send_bulk_reminders():
             print(f"Reminder loop error: {e}")
             time.sleep(300)
 
-# ==================== API FUNCTIONS ====================
+# ==================== API FUNCTIONS (FIXED) ====================
 def call_generic_lookup_api(url):
-    """FIXED: Hard timeout (connect=10s, read=25s) so it never hangs forever."""
+    """Internal helper — returns (result_dict, error_or_None) tuple."""
     try:
         print(f"[API CALL] {url}")
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0.7",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0.8",
             "Accept": "application/json,text/html,text/plain,*/*",
             "Connection": "close",
         }
         response = requests.get(url, headers=headers, timeout=(10, 25))
         print(f"[API CALL] Response Status: {response.status_code}")
         if response.status_code != 200:
-            return {"error": f"HTTP {response.status_code}", "raw": response.text[:500]}, None
+            return {"error": f"HTTP {response.status_code}", "raw": response.text[:500]}, f"HTTP {response.status_code}"
         content = response.text
         if not content or len(content.strip()) < 5:
-            return {"error": "empty_response"}, None
+            return {"error": "empty_response"}, "empty_response"
         try:
             data = response.json()
             data = remove_branding(data)
@@ -1476,31 +1476,42 @@ def call_generic_lookup_api(url):
             return {"raw_response": content}, None
     except requests.exceptions.Timeout:
         print("[API CALL] Timeout!")
-        return {"error": "timeout"}, None
+        return {"error": "timeout"}, "timeout"
     except requests.exceptions.ConnectionError as ce:
         print(f"[API CALL] Connection error: {ce}")
-        return {"error": "connection_error"}, None
+        return {"error": "connection_error"}, "connection_error"
     except Exception as e:
         print(f"[API CALL] Exception: {e}")
-        return {"error": f"exception_{e}"}, None
+        return {"error": f"exception_{e}"}, str(e)
+
 
 def call_number_lookup_api(phone):
+    """
+    FIXED v11.0.8: Returns ONLY the result dict (unpacks tuple internally).
+    So callers can safely do result.get('error') etc.
+    """
     try:
         url = NUMBER_LOOKUP_API_URL.format(number=phone)
-        return call_generic_lookup_api(url)
+        result, _err = call_generic_lookup_api(url)
+        return result
     except Exception as e:
         print(f"[NUMBER LOOKUP API] Exception: {e}")
-        return {"error": f"exception_{e}"}, None
+        return {"error": f"exception_{e}"}
+
 
 def call_telegram_lookup_api(username):
+    """
+    FIXED v11.0.8: Returns ONLY the result dict (unpacks tuple internally).
+    """
     try:
         if not username.startswith('@'):
             username = '@' + username
         url = TELEGRAM_LOOKUP_API_URL.format(username=username)
-        return call_generic_lookup_api(url)
+        result, _err = call_generic_lookup_api(url)
+        return result
     except Exception as e:
         print(f"[TELEGRAM LOOKUP API] Exception: {e}")
-        return {"error": f"exception_{e}"}, None
+        return {"error": f"exception_{e}"}
 
 # ==================== VALIDATION FUNCTIONS ====================
 def has_valid_number_results(result):
@@ -2214,11 +2225,11 @@ def admin_api_test(message):
         bot.reply_to(message, "Usage: /apitest 9876787776")
         return
     bot.reply_to(message, "🧪 Testing Number API...")
-    result, err = call_number_lookup_api(phone)
+    result = call_number_lookup_api(phone)
     if result and not result.get('error'):
         bot.reply_to(message, f"✅ Number API OK\nResponse: `{str(result)[:200]}`", parse_mode="Markdown")
     else:
-        bot.reply_to(message, f"❌ Number API failed\nReason: `{str(err)[:200]}`", parse_mode="Markdown")
+        bot.reply_to(message, f"❌ Number API failed\nResult: `{str(result)[:200]}`", parse_mode="Markdown")
 
 @bot.message_handler(content_types=['photo', 'document'])
 def payment_screenshot_handler(message):
@@ -3014,11 +3025,11 @@ def confirm_giveaway(call):
 # ==================== FIXED: PROCESS LOOKUP FUNCTIONS ====================
 def process_lookup(message):
     """
-    FIXED v11.0.7:
+    FIXED v11.0.8:
+    - API now returns ONLY dict (not tuple) so result.get() works
     - Full try/except/finally so user is NEVER stuck on 'Searching...'
     - Animation thread stopped BEFORE message is edited
     - Active session always removed at the end
-    - API call has hard timeout via (connect, read) tuple
     """
     user_id = message.from_user.id
     raw_phone = str(message.text or "").strip()
@@ -3099,6 +3110,7 @@ You can also protect your number for ₹59 (40% off)!
         time.sleep(0.8)
 
         try:
+            # ✅ FIXED: call_number_lookup_api now returns ONLY dict
             result = call_number_lookup_api(phone)
         except Exception as api_err:
             print(f"Number lookup API exception: {api_err}")
@@ -3206,7 +3218,8 @@ Please verify the number and try again.
 
 def process_telegram_lookup(message):
     """
-    FIXED v11.0.7: Same safety pattern as process_lookup.
+    FIXED v11.0.8: Same safety pattern as process_lookup.
+    API returns ONLY dict (not tuple).
     """
     user_id = message.from_user.id
     username_input = str(message.text or "").strip()
@@ -3270,6 +3283,7 @@ def process_telegram_lookup(message):
         time.sleep(0.8)
 
         try:
+            # ✅ FIXED: call_telegram_lookup_api now returns ONLY dict
             result = call_telegram_lookup_api(username_input)
         except Exception as api_err:
             print(f"Telegram lookup API exception: {api_err}")
@@ -3401,7 +3415,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot Running - Version 11.0.7 - Fixed Searching Stuck Issue!"
+    return "TraceX Bot Running - Version 11.0.8 - Fixed Searching Stuck + Tuple Bug!"
 
 def keep_alive():
     def run():
@@ -3425,7 +3439,9 @@ if __name__ == "__main__":
     print("   • Unlimited Plans: 40% cheaper")
     print("   • Protection: 40% cheaper")
     print("=" * 60)
-    print("🔍 FIXES IN v11.0.7:")
+    print("🔍 FIXES IN v11.0.8:")
+    print("   • Fixed 'tuple' object has no attribute 'get' bug")
+    print("   • call_number_lookup_api / call_telegram_lookup_api now return dict only")
     print("   • Full try/except/finally around lookup handlers")
     print("   • Animation thread stopped BEFORE message edit")
     print("   • Hard timeout (connect=10s, read=25s) on API calls")
