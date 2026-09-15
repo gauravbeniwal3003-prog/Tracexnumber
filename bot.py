@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 11.0.10 - Fixed lookup state handling for 12 services
+Version: 11.0.11 - Fixed JSON wrapping + long message splitting
 """
 
 import os
@@ -157,7 +157,7 @@ WEBSITE_URL = get_env_var("WEBSITE_URL", required=False, default="https://tracex
 WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=False, default="https://tracexdata.online/register")
 GROUP_LINK = get_env_var("GROUP_LINK", required=False, default="https://t.me/Gaurav_beni_0001")
 
-BOT_VERSION = "11.0.10"
+BOT_VERSION = "11.0.11"
 MINIMUM_RECHARGE = int(get_env_var("MINIMUM_RECHARGE", required=False, default="30"))
 
 MAX_LOOKUP_RESULTS = 20
@@ -488,23 +488,42 @@ def lookup_result_markup():
     markup.add(InlineKeyboardButton("📢 JOIN GROUP", url=GROUP_LINK))
     return markup
 
+def escape_html(text):
+    """Escape HTML special characters for safe embedding in HTML messages."""
+    if text is None:
+        return ""
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
 def format_json_for_telegram(data):
+    """
+    Format JSON data for Telegram using HTML <pre> block.
+    <pre> gives a monospace block with tap-to-copy support.
+    Returns an HTML-safe string.
+    """
     try:
         if isinstance(data, (dict, list)):
             json_str = json.dumps(data, indent=2, ensure_ascii=False)
-            return f"```json\n{json_str}\n```"
         elif isinstance(data, str):
             try:
                 parsed = json.loads(data)
                 json_str = json.dumps(parsed, indent=2, ensure_ascii=False)
-                return f"```json\n{json_str}\n```"
-            except:
-                return data
+            except Exception:
+                json_str = data
         else:
-            return str(data)
+            json_str = str(data)
+
+        # Escape HTML chars so <pre> content is safe
+        json_str = json_str.replace("&", "&amp;")
+        json_str = json_str.replace("<", "&lt;")
+        json_str = json_str.replace(">", "&gt;")
+
+        return f"<pre>{json_str}</pre>"
     except Exception as e:
         print(f"JSON format error: {e}")
-        return str(data)
+        return f"<pre>{escape_html(str(data))}</pre>"
 
 # ==================== LOOKUP API FUNCTIONS ====================
 def call_lookup_api(service, query):
@@ -516,7 +535,7 @@ def call_lookup_api(service, query):
         url = f"{LOOKUP_API_BASE}?api_key={LOOKUP_API_KEY}&service={service}&query={query}"
         print(f"[LOOKUP API] Service: {service}, Query: {query}")
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0.10",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0.11",
             "Accept": "application/json,text/html,text/plain,*/*",
             "Connection": "close",
         }
@@ -640,8 +659,63 @@ def is_no_data_response(result):
             return True
     return False
 
+# ==================== SMART SPLITTING (PRE-BLOCK AWARE) ====================
 def split_long_text(text, limit=TELEGRAM_SAFE_LIMIT):
+    """
+    Split text safely without breaking <pre> blocks.
+
+    If the message wraps a big JSON inside a single <pre>...</pre>,
+    we split *inside* the pre block and close/reopen tags per chunk
+    so every chunk is a valid HTML fragment. This keeps each part
+    copy-friendly (each chunk has its own complete <pre> block).
+    """
     text = str(text or "")
+    if len(text) <= limit:
+        return [text]
+
+    # Detect a single outer <pre> block
+    pre_start = text.find("<pre>")
+    pre_end = text.rfind("</pre>")
+
+    if pre_start != -1 and pre_end != -1 and pre_start < pre_end:
+        before = text[:pre_start]
+        inner = text[pre_start + len("<pre>"):pre_end]
+        after = text[pre_end + len("</pre>"):]
+
+        overhead = len("<pre></pre>")
+        # Reserve enough room for header added later
+        chunk_budget = max(500, limit - overhead - 400)
+
+        chunks = []
+        lines = inner.split("\n")
+        current = ""
+        first_chunk = True
+
+        for line in lines:
+            candidate = (current + "\n" + line) if current else line
+            if len(candidate) > chunk_budget and current:
+                # Close this chunk
+                prefix = before if first_chunk else ""
+                suffix = ""
+                body = f"{prefix}<pre>{current}</pre>{suffix}"
+                chunks.append(body)
+                first_chunk = False
+                current = line
+            else:
+                current = candidate
+
+        if current or first_chunk:
+            prefix = before if first_chunk else ""
+            body = f"{prefix}<pre>{current}</pre>"
+            chunks.append(body)
+
+        # Attach trailing content to the last chunk
+        if after and chunks:
+            chunks[-1] = chunks[-1] + after
+
+        return chunks if chunks else [text]
+
+    # No <pre> block: standard line-based split
     chunks = []
     current = ""
     for line in text.splitlines(keepends=True):
@@ -654,33 +728,90 @@ def split_long_text(text, limit=TELEGRAM_SAFE_LIMIT):
         chunks.append(current.rstrip())
     return chunks or [""]
 
-def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, parse_mode="Markdown"):
+
+def send_or_edit_long_message(chat_id, message_id, text, reply_markup=None, parse_mode="HTML"):
+    """
+    Send or edit a long HTML message safely.
+    - Each chunk is a complete valid HTML fragment.
+    - A "Part X/N" header is prepended when there are multiple chunks.
+    """
     chunks = split_long_text(text)
     sent_messages = []
+    total = len(chunks)
+
     for idx, chunk in enumerate(chunks):
         is_first = idx == 0
-        is_last = idx == len(chunks) - 1
+        is_last = idx == total - 1
         markup = reply_markup if is_last else None
+
+        if total > 1:
+            body = f"<b>📄 Part {idx + 1}/{total}</b>\n{chunk}"
+        else:
+            body = chunk
+
+        # Telegram hard limit is 4096; add safety net
+        if len(body) > 4096:
+            body = body[:4090] + "…"
+
         try:
             if is_first:
-                sent_messages.append(bot.edit_message_text(chunk, chat_id, message_id, reply_markup=markup, parse_mode=parse_mode, disable_web_page_preview=True))
+                sent_messages.append(bot.edit_message_text(
+                    body, chat_id, message_id,
+                    reply_markup=markup, parse_mode=parse_mode,
+                    disable_web_page_preview=True
+                ))
             else:
-                sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, parse_mode=parse_mode, disable_web_page_preview=True))
+                sent_messages.append(bot.send_message(
+                    chat_id, body,
+                    reply_markup=markup, parse_mode=parse_mode,
+                    disable_web_page_preview=True
+                ))
         except Exception as send_error:
             print(f"Long message send error: {send_error}")
-            if is_first:
-                sent_messages.append(bot.edit_message_text(chunk, chat_id, message_id, reply_markup=markup))
-            else:
-                sent_messages.append(bot.send_message(chat_id, chunk, reply_markup=markup, disable_web_page_preview=True))
+            # Fallback: strip HTML tags and send as plain text
+            try:
+                plain = re.sub(r"<[^>]+>", "", body)
+                if len(plain) > 4090:
+                    plain = plain[:4090] + "…"
+                if is_first:
+                    sent_messages.append(bot.edit_message_text(
+                        plain, chat_id, message_id,
+                        reply_markup=markup, disable_web_page_preview=True
+                    ))
+                else:
+                    sent_messages.append(bot.send_message(
+                        chat_id, plain,
+                        reply_markup=markup, disable_web_page_preview=True
+                    ))
+            except Exception as e2:
+                print(f"Fallback send failed: {e2}")
     return sent_messages
 
-def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode="Markdown"):
+
+def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode="HTML"):
+    """Safely edit a message; falls back to plain text if HTML fails."""
     try:
-        return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup, parse_mode=parse_mode, disable_web_page_preview=True)
+        return bot.edit_message_text(
+            text, chat_id, message_id,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True
+        )
     except Exception as e:
-        if "message is not modified" in str(e):
+        err = str(e).lower()
+        if "message is not modified" in err:
             return None
-        raise e
+        # Try plain text fallback once
+        try:
+            plain = re.sub(r"<[^>]+>", "", str(text))
+            return bot.edit_message_text(
+                plain, chat_id, message_id,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        except Exception as e2:
+            print(f"safe_edit_message failed: {e} / fallback: {e2}")
+            return None
 
 def is_active_session(user_id):
     with active_sessions_lock:
@@ -1762,39 +1893,50 @@ After joining, tap ✅ button below.
 
 # ==================== FORMATTING FUNCTIONS ====================
 def format_lookup_result(result, service_key, query_value, user_id, unlimited_active=False, unlimited_expiry=None):
+    """
+    Build the lookup result message as HTML.
+    JSON is rendered inside a <pre> block for clean wrapping + tap-to-copy.
+    """
     service = LOOKUP_SERVICES.get(service_key, {})
     service_name = service.get("name", service_key)
     emoji = service.get("emoji", "🔍")
     cost = service.get("cost", 3)
+
     if not isinstance(result, dict):
         result = {"response": str(result)}
+
     json_output = format_json_for_telegram(result)
     user = get_user(user_id)
     updated_total = get_total_credits(user_id)
-    output = f"""
-{emoji} *{service_name.upper()}*
+    total_searches = user.get('total_searches', 0) if user else 0
+    safe_query = escape_html(query_value)
+
+    output = f"""<b>{emoji} {service_name.upper()}</b>
 ━━━━━━━━━━━━━━━━━━
 
-🔎 Query: `{query_value}`
+🔎 Query: <code>{safe_query}</code>
 
-📄 *Result:*
+📄 <b>Result:</b>
 {json_output}
 """
+
     if unlimited_active:
+        exp = escape_html(unlimited_expiry[:16] if unlimited_expiry else "N/A")
         output += f"""
 
 ━━━━━━━━━━━━━━━━━━
-🚀 *UNLIMITED ACTIVE*
+🚀 <b>UNLIMITED ACTIVE</b>
 No credits deducted.
-Expires: `{unlimited_expiry[:16] if unlimited_expiry else 'N/A'}`
+Expires: <code>{exp}</code>
 """
     else:
         output += f"""
 
 ━━━━━━━━━━━━━━━━━━
-💎 Used: `{cost}`
-💎 Left: `{updated_total}`
-🔎 Total: `{user.get('total_searches', 0) if user else 0}`"""
+💎 Used: <code>{cost}</code>
+💎 Left: <code>{updated_total}</code>
+🔎 Total: <code>{total_searches}</code>"""
+
     output += f"""
 {footer()}
 """
@@ -2049,6 +2191,7 @@ def process_lookup(message):
     """
     Unified lookup handler for all 12 services.
     Handles validation, credit deduction, API call, and result display.
+    Uses HTML parse mode for JSON-safe results.
     """
     user_id = message.from_user.id
     query_input = str(message.text or "").strip()
@@ -2190,11 +2333,10 @@ Protect your number for ₹59!
         stop_animation_safely(stop_animation, animation_thread)
 
         if is_no_data_response(result):
-            output = f"""
-❌ *NO DATA FOUND*
+            output = f"""<b>❌ NO DATA FOUND</b>
 ━━━━━━━━━━━━━━━━━━
 
-{service.get('emoji', '🔍')} Query: `{query_clean}`
+{service.get('emoji', '🔍')} Query: <code>{escape_html(query_clean)}</code>
 
 No information found.
 Please verify the query and try again.
@@ -2202,24 +2344,23 @@ Please verify the query and try again.
 💎 Credits NOT deducted
 {footer()}
 """
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='HTML')
             record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=0)
             return
 
         if not result or result.get('error'):
-            output = f"""
-❌ *API RESPONSE*
+            output = f"""<b>❌ API RESPONSE</b>
 ━━━━━━━━━━━━━━━━━━
 
-{service.get('emoji', '🔍')} Query: `{query_clean}`
+{service.get('emoji', '🔍')} Query: <code>{escape_html(query_clean)}</code>
 
-📄 *Response:*
+📄 <b>Response:</b>
 {format_json_for_telegram(result or {"error": "No response"})}
 
 💎 Credits NOT deducted
 {footer()}
 """
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='HTML')
             record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=0)
             return
 
@@ -2229,34 +2370,44 @@ Please verify the query and try again.
         if has_valid_results(result):
             if not unlimited_active:
                 if not deduct_credits(user_id, cost):
-                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
+                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ <b>Failed to deduct credit. Please try again.</b>", parse_mode='HTML')
                     return
             increment_total_searches(user_id)
             output = format_lookup_result(result, service_key, query_clean, user_id, unlimited_active, unlimited_expiry)
-            send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=lookup_result_markup(), parse_mode='Markdown')
+            send_or_edit_long_message(
+                message.chat.id,
+                loading_msg.message_id,
+                output,
+                reply_markup=lookup_result_markup(),
+                parse_mode='HTML'
+            )
             record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=True, lookup_type=service_key, credits_used=cost if not unlimited_active else 0)
         else:
             if not unlimited_active:
                 if not deduct_credits(user_id, cost):
-                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
+                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ <b>Failed to deduct credit. Please try again.</b>", parse_mode='HTML')
                     return
             increment_total_searches(user_id)
             updated_total = get_total_credits(user_id)
-            output = f"""
-{service.get('emoji', '🔍')} *{service.get('name', service_key).upper()}*
+            output = f"""<b>{service.get('emoji', '🔍')} {service.get('name', service_key).upper()}</b>
 ━━━━━━━━━━━━━━━━━━
 
-Query: `{query_clean}`
+Query: <code>{escape_html(query_clean)}</code>
 
-📄 *API Response:*
+📄 <b>API Response:</b>
 {format_json_for_telegram(result)}
 
 ━━━━━━━━━━━━━━━━━━
-💎 Used: `{0 if unlimited_active else cost}`
-💎 Left: `{updated_total}`
+💎 Used: <code>{0 if unlimited_active else cost}</code>
+💎 Left: <code>{updated_total}</code>
 {footer()}
 """
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            send_or_edit_long_message(
+                message.chat.id,
+                loading_msg.message_id,
+                output,
+                parse_mode='HTML'
+            )
             record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=cost if not unlimited_active else 0)
 
     except Exception as e:
@@ -2266,11 +2417,11 @@ Query: `{query_clean}`
                 safe_edit_message(
                     message.chat.id,
                     loading_msg.message_id,
-                    f"❌ *Search failed!*\n\nError: `{str(e)[:100]}`\n\nCredits NOT deducted.\nPlease try again.",
-                    parse_mode='Markdown'
+                    f"❌ <b>Search failed!</b>\n\nError: <code>{escape_html(str(e)[:100])}</code>\n\nCredits NOT deducted.\nPlease try again.",
+                    parse_mode='HTML'
                 )
             else:
-                bot.reply_to(message, f"❌ *Search failed!* Please try again.",
+                bot.reply_to(message, "❌ *Search failed!* Please try again.",
                              parse_mode='Markdown')
         except Exception as inner:
             print(f"Error notifying user: {inner}")
@@ -2454,9 +2605,9 @@ def admin_api_test(message):
     bot.reply_to(message, f"🧪 Testing {service}...")
     result = call_lookup_api(service, query)
     if result and not result.get('error'):
-        bot.reply_to(message, f"✅ OK\n`{str(result)[:200]}`", parse_mode="Markdown")
+        bot.reply_to(message, f"✅ OK\n<pre>{escape_html(str(result)[:200])}</pre>", parse_mode="HTML")
     else:
-        bot.reply_to(message, f"❌ Failed\n`{str(result)[:200]}`", parse_mode="Markdown")
+        bot.reply_to(message, f"❌ Failed\n<pre>{escape_html(str(result)[:200])}</pre>", parse_mode="HTML")
 
 @bot.message_handler(content_types=['photo', 'document'])
 def payment_screenshot_handler(message):
@@ -2529,7 +2680,7 @@ def text_handler(message):
         return
     text = message.text.strip()
     
-    # ✅ FIXED: Check for dict state with "awaiting_lookup_query"
+    # Check for dict state with "awaiting_lookup_query"
     state = user_states.get(user_id)
     if isinstance(state, dict) and state.get("state") == "awaiting_lookup_query":
         process_lookup(message)
@@ -3235,7 +3386,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot v11.0.10 - 12 Lookup Services - Running!"
+    return "TraceX Bot v11.0.11 - 12 Lookup Services - Running!"
 
 def keep_alive():
     def run():
@@ -3256,10 +3407,12 @@ if __name__ == "__main__":
     for key, svc in LOOKUP_SERVICES.items():
         print(f"   • {svc['emoji']} {svc['name']} — ₹{svc['cost']}")
     print("=" * 60)
-    print("🔍 FIXES IN v11.0.10:")
-    print("   • Fixed 'Unknown command' bug for lookup inputs")
-    print("   • text_handler now checks dict state correctly")
-    print("   • All 12 services working properly")
+    print("🔍 FIXES IN v11.0.11:")
+    print("   • JSON rendered as HTML <pre> block (copy-friendly)")
+    print("   • Smart splitter keeps <pre> blocks intact per chunk")
+    print("   • Part indicators on multi-message results")
+    print("   • Plain-text fallback if HTML parse fails")
+    print("   • HTML special chars escaped safely")
     print("=" * 60)
 
     keep_alive()
