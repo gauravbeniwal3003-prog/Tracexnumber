@@ -1,7 +1,7 @@
 """
 TraceX Lookup Bot - Premium Telecom Lookup Bot
 Enhanced Credit System with Supabase & Manual QR
-Version: 11.0.9 - 12 Lookup Services + Professional Messages
+Version: 11.0.10 - Fixed lookup state handling for 12 services
 """
 
 import os
@@ -157,7 +157,7 @@ WEBSITE_URL = get_env_var("WEBSITE_URL", required=False, default="https://tracex
 WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=False, default="https://tracexdata.online/register")
 GROUP_LINK = get_env_var("GROUP_LINK", required=False, default="https://t.me/Gaurav_beni_0001")
 
-BOT_VERSION = "11.0.9"
+BOT_VERSION = "11.0.10"
 MINIMUM_RECHARGE = int(get_env_var("MINIMUM_RECHARGE", required=False, default="30"))
 
 MAX_LOOKUP_RESULTS = 20
@@ -474,7 +474,7 @@ def telegram_lookup_protection_markup():
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton("🛡️ PROTECT MY TG ID", callback_data="plan_protect_telegram"),
-        InlineKeyboardButton("🔍 NEW LOOKUP", callback_data="telegram_lookup")
+        InlineKeyboardButton("🔍 NEW LOOKUP", callback_data="back_to_lookup")
     )
     markup.add(InlineKeyboardButton("🏠 MAIN MENU", callback_data="main_menu"))
     return markup
@@ -516,7 +516,7 @@ def call_lookup_api(service, query):
         url = f"{LOOKUP_API_BASE}?api_key={LOOKUP_API_KEY}&service={service}&query={query}"
         print(f"[LOOKUP API] Service: {service}, Query: {query}")
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0.9",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 16) TraceXBot/11.0.10",
             "Accept": "application/json,text/html,text/plain,*/*",
             "Connection": "close",
         }
@@ -2003,6 +2003,282 @@ Keep referring!
     markup.add(InlineKeyboardButton("🔙 MENU", callback_data="main_menu"))
     bot.send_message(message.chat.id, progress_msg, reply_markup=markup, parse_mode='Markdown', disable_web_page_preview=True)
 
+# ==================== ANIMATED LOADING ====================
+def update_loading_animation(chat_id, message_id, stage, emoji="🔍"):
+    dots = ["", ".", "..", "..."]
+    dot = dots[stage % 4]
+    try:
+        bot.edit_message_text(f"{emoji} *Searching{dot}*", chat_id, message_id, parse_mode='Markdown')
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if "message is not modified" in err:
+            return True
+        elif "message to edit not found" in err or "message can't be edited" in err or "message identifier is not specified" in err:
+            return False
+        else:
+            print(f"Animation update error: {e}")
+            return True
+
+def animated_loading(chat_id, message_id, stop_event, emoji="🔍"):
+    stage = 0
+    while not stop_event.is_set():
+        try:
+            should_continue = update_loading_animation(chat_id, message_id, stage, emoji)
+            if not should_continue:
+                return
+            stage += 1
+            for _ in range(5):
+                if stop_event.is_set():
+                    return
+                time.sleep(0.1)
+        except Exception as e:
+            print(f"Animation thread stopping: {e}")
+            return
+
+def stop_animation_safely(stop_event, thread):
+    try:
+        stop_event.set()
+        if thread and thread.is_alive():
+            thread.join(timeout=3)
+    except Exception as e:
+        print(f"Stop animation error: {e}")
+
+# ==================== FIXED: PROCESS LOOKUP FUNCTION ====================
+def process_lookup(message):
+    """
+    Unified lookup handler for all 12 services.
+    Handles validation, credit deduction, API call, and result display.
+    """
+    user_id = message.from_user.id
+    query_input = str(message.text or "").strip()
+
+    if query_input == "❌ CANCEL" or query_input == "/cancel":
+        user_states.pop(user_id, None)
+        remove_active_session(user_id)
+        bot.reply_to(message, "❌ Cancelled.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        return
+
+    state = user_states.get(user_id)
+    if not (isinstance(state, dict) and state.get("state") == "awaiting_lookup_query"):
+        return
+
+    service_key = state.get("service")
+    user_states.pop(user_id, None)
+
+    service = LOOKUP_SERVICES.get(service_key)
+    if not service:
+        bot.reply_to(message, "❌ Invalid service.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        return
+
+    # Validate query based on service type
+    query_clean = query_input
+    query_type = service.get("query_type")
+
+    if query_type == "mobile":
+        phone = normalize_indian_mobile(query_input)
+        if not phone:
+            bot.reply_to(message, f"❌ *Invalid mobile number!*\n\nEnter 10-digit Indian number.\nExample: `{service.get('placeholder', '9876543210')}`",
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+        query_clean = phone
+    elif query_type == "username":
+        if not query_input.startswith('@'):
+            query_clean = '@' + query_input
+        else:
+            query_clean = query_input
+    elif query_type == "aadhaar":
+        if not re.match(r'^\d{12}$', query_input):
+            bot.reply_to(message, "❌ *Invalid Aadhaar!*\n\nEnter 12-digit Aadhaar number.\nExample: `123456789012`",
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+    elif query_type == "vehicle":
+        if not re.match(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}$', query_input.upper()):
+            bot.reply_to(message, "❌ *Invalid vehicle number!*\n\nEnter valid format.\nExample: `BR06PE8167`",
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+        query_clean = query_input.upper()
+    elif query_type == "ifsc":
+        if not re.match(r'^[A-Z]{4}0[A-Z0-9]{6}$', query_input.upper()):
+            bot.reply_to(message, "❌ *Invalid IFSC code!*\n\nEnter valid 11-character IFSC.\nExample: `SBIN0001234`",
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+        query_clean = query_input.upper()
+    elif query_type == "gst":
+        if not re.match(r'^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$', query_input.upper()):
+            bot.reply_to(message, "❌ *Invalid GST number!*\n\nEnter valid 15-character GST.\nExample: `22AAAAA0000A1Z5`",
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+        query_clean = query_input.upper()
+    elif query_type == "imei":
+        if not re.match(r'^\d{15}$', query_input):
+            bot.reply_to(message, "❌ *Invalid IMEI!*\n\nEnter 15-digit IMEI number.\nExample: `353010111111110`",
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+    elif query_type == "pan":
+        if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', query_input.upper()):
+            bot.reply_to(message, "❌ *Invalid PAN!*\n\nEnter valid 10-character PAN.\nExample: `AAYFK4129N`",
+                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+        query_clean = query_input.upper()
+
+    if is_active_session(user_id):
+        bot.reply_to(message, "⏳ *Search already running!*\n\nWait for current search.",
+                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+        return
+
+    if user_id in user_cooldown:
+        if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
+            wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
+            bot.reply_to(message, f"⏳ *Wait {wait_time}s*",
+                         reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
+            return
+
+    add_active_session(user_id)
+
+    loading_msg = None
+    stop_animation = threading.Event()
+    animation_thread = None
+
+    try:
+        user = get_user(user_id)
+        total_credits = get_total_credits(user_id)
+        unlimited_active, unlimited_expiry = get_active_unlimited(user)
+        cost = service.get("cost", 3)
+
+        if total_credits < cost and not unlimited_active:
+            bot.reply_to(message, f"❌ *Insufficient credits!*\n\n{service.get('name')} costs `{cost}` credits.\nYou have `{total_credits}`.\n\nBuy more credits or get unlimited plan.\n\n🌐 {WEBSITE_URL}",
+                         reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
+            return
+
+        # Check protection for number lookup
+        if service_key == "numberinfo" and is_number_protected(query_clean):
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🛡️ PROTECT MY NUMBER", callback_data="protect"))
+            markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
+            bot.reply_to(message, f"""
+🛡️ *PROTECTED NUMBER*
+
+📱 `{query_clean}`
+
+This number is protected.
+
+Details hidden.
+
+Protect your number for ₹59!
+""", reply_markup=markup, parse_mode='Markdown')
+            return
+
+        user_cooldown[user_id] = time.time()
+        loading_msg = bot.reply_to(message, f"{service.get('emoji', '🔍')} *Searching...*", parse_mode='Markdown')
+
+        animation_thread = threading.Thread(
+            target=animated_loading,
+            args=(message.chat.id, loading_msg.message_id, stop_animation, service.get('emoji', '🔍')),
+            daemon=True
+        )
+        animation_thread.start()
+
+        time.sleep(0.8)
+
+        try:
+            result = call_lookup_api(service_key, query_clean)
+        except Exception as api_err:
+            print(f"Lookup API exception: {api_err}")
+            result = {"error": f"api_exception_{api_err}"}
+
+        stop_animation_safely(stop_animation, animation_thread)
+
+        if is_no_data_response(result):
+            output = f"""
+❌ *NO DATA FOUND*
+━━━━━━━━━━━━━━━━━━
+
+{service.get('emoji', '🔍')} Query: `{query_clean}`
+
+No information found.
+Please verify the query and try again.
+
+💎 Credits NOT deducted
+{footer()}
+"""
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=0)
+            return
+
+        if not result or result.get('error'):
+            output = f"""
+❌ *API RESPONSE*
+━━━━━━━━━━━━━━━━━━
+
+{service.get('emoji', '🔍')} Query: `{query_clean}`
+
+📄 *Response:*
+{format_json_for_telegram(result or {"error": "No response"})}
+
+💎 Credits NOT deducted
+{footer()}
+"""
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=0)
+            return
+
+        if not isinstance(result, dict):
+            result = {"response": str(result)}
+
+        if has_valid_results(result):
+            if not unlimited_active:
+                if not deduct_credits(user_id, cost):
+                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
+                    return
+            increment_total_searches(user_id)
+            output = format_lookup_result(result, service_key, query_clean, user_id, unlimited_active, unlimited_expiry)
+            send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=lookup_result_markup(), parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=True, lookup_type=service_key, credits_used=cost if not unlimited_active else 0)
+        else:
+            if not unlimited_active:
+                if not deduct_credits(user_id, cost):
+                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
+                    return
+            increment_total_searches(user_id)
+            updated_total = get_total_credits(user_id)
+            output = f"""
+{service.get('emoji', '🔍')} *{service.get('name', service_key).upper()}*
+━━━━━━━━━━━━━━━━━━
+
+Query: `{query_clean}`
+
+📄 *API Response:*
+{format_json_for_telegram(result)}
+
+━━━━━━━━━━━━━━━━━━
+💎 Used: `{0 if unlimited_active else cost}`
+💎 Left: `{updated_total}`
+{footer()}
+"""
+            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
+            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=cost if not unlimited_active else 0)
+
+    except Exception as e:
+        print(f"process_lookup critical error: {e}")
+        try:
+            if loading_msg:
+                safe_edit_message(
+                    message.chat.id,
+                    loading_msg.message_id,
+                    f"❌ *Search failed!*\n\nError: `{str(e)[:100]}`\n\nCredits NOT deducted.\nPlease try again.",
+                    parse_mode='Markdown'
+                )
+            else:
+                bot.reply_to(message, f"❌ *Search failed!* Please try again.",
+                             parse_mode='Markdown')
+        except Exception as inner:
+            print(f"Error notifying user: {inner}")
+
+    finally:
+        stop_animation_safely(stop_animation, animation_thread)
+        remove_active_session(user_id)
+
 # ==================== BOT HANDLERS ====================
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -2252,11 +2528,14 @@ def text_handler(message):
         send_join_required(message.chat.id, missing)
         return
     text = message.text.strip()
-    if user_states.get(user_id) == "awaiting_lookup_query":
+    
+    # ✅ FIXED: Check for dict state with "awaiting_lookup_query"
+    state = user_states.get(user_id)
+    if isinstance(state, dict) and state.get("state") == "awaiting_lookup_query":
         process_lookup(message)
         return
-    elif isinstance(user_states.get(user_id), dict) and user_states[user_id].get("state") == "awaiting_protection_input":
-        plan_id = user_states[user_id].get("plan_id")
+    elif isinstance(state, dict) and state.get("state") == "awaiting_protection_input":
+        plan_id = state.get("plan_id")
         if plan_id:
             process_protection_payment_input(message, plan_id)
         return
@@ -2951,286 +3230,12 @@ def confirm_giveaway(call):
     bot.edit_message_text(result_msg, call.message.chat.id, call.message.message_id, reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
     del temp_data[user_id]
 
-# ==================== FIXED: PROCESS LOOKUP FUNCTION ====================
-def process_lookup(message):
-    """
-    Unified lookup handler for all 12 services.
-    Handles validation, credit deduction, API call, and result display.
-    """
-    user_id = message.from_user.id
-    query_input = str(message.text or "").strip()
-
-    if query_input == "❌ CANCEL" or query_input == "/cancel":
-        user_states.pop(user_id, None)
-        remove_active_session(user_id)
-        bot.reply_to(message, "❌ Cancelled.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        return
-
-    state = user_states.get(user_id)
-    if not (isinstance(state, dict) and state.get("state") == "awaiting_lookup_query"):
-        return
-
-    service_key = state.get("service")
-    user_states.pop(user_id, None)
-
-    service = LOOKUP_SERVICES.get(service_key)
-    if not service:
-        bot.reply_to(message, "❌ Invalid service.", reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        return
-
-    # Validate query based on service type
-    query_clean = query_input
-    query_type = service.get("query_type")
-
-    if query_type == "mobile":
-        phone = normalize_indian_mobile(query_input)
-        if not phone:
-            bot.reply_to(message, f"❌ *Invalid mobile number!*\n\nEnter 10-digit Indian number.\nExample: `{service.get('placeholder', '9876543210')}`",
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        query_clean = phone
-    elif query_type == "username":
-        if not query_input.startswith('@'):
-            query_clean = '@' + query_input
-        else:
-            query_clean = query_input
-    elif query_type == "aadhaar":
-        if not re.match(r'^\d{12}$', query_input):
-            bot.reply_to(message, "❌ *Invalid Aadhaar!*\n\nEnter 12-digit Aadhaar number.\nExample: `123456789012`",
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-    elif query_type == "vehicle":
-        if not re.match(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}$', query_input.upper()):
-            bot.reply_to(message, "❌ *Invalid vehicle number!*\n\nEnter valid format.\nExample: `BR06PE8167`",
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        query_clean = query_input.upper()
-    elif query_type == "ifsc":
-        if not re.match(r'^[A-Z]{4}0[A-Z0-9]{6}$', query_input.upper()):
-            bot.reply_to(message, "❌ *Invalid IFSC code!*\n\nEnter valid 11-character IFSC.\nExample: `SBIN0001234`",
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        query_clean = query_input.upper()
-    elif query_type == "gst":
-        if not re.match(r'^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$', query_input.upper()):
-            bot.reply_to(message, "❌ *Invalid GST number!*\n\nEnter valid 15-character GST.\nExample: `22AAAAA0000A1Z5`",
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        query_clean = query_input.upper()
-    elif query_type == "imei":
-        if not re.match(r'^\d{15}$', query_input):
-            bot.reply_to(message, "❌ *Invalid IMEI!*\n\nEnter 15-digit IMEI number.\nExample: `353010111111110`",
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-    elif query_type == "pan":
-        if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', query_input.upper()):
-            bot.reply_to(message, "❌ *Invalid PAN!*\n\nEnter valid 10-character PAN.\nExample: `AAYFK4129N`",
-                        reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-        query_clean = query_input.upper()
-
-    if is_active_session(user_id):
-        bot.reply_to(message, "⏳ *Search already running!*\n\nWait for current search.",
-                     reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-        return
-
-    if user_id in user_cooldown:
-        if time.time() - user_cooldown[user_id] < COOLDOWN_SECONDS:
-            wait_time = int(COOLDOWN_SECONDS - (time.time() - user_cooldown[user_id]))
-            bot.reply_to(message, f"⏳ *Wait {wait_time}s*",
-                         reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown')
-            return
-
-    add_active_session(user_id)
-
-    loading_msg = None
-    stop_animation = threading.Event()
-    animation_thread = None
-
-    try:
-        user = get_user(user_id)
-        total_credits = get_total_credits(user_id)
-        unlimited_active, unlimited_expiry = get_active_unlimited(user)
-        cost = service.get("cost", 3)
-
-        if total_credits < cost and not unlimited_active:
-            bot.reply_to(message, f"❌ *Insufficient credits!*\n\n{service.get('name')} costs `{cost}` credits.\nYou have `{total_credits}`.\n\nBuy more credits or get unlimited plan.\n\n🌐 {WEBSITE_URL}",
-                         reply_markup=get_main_keyboard_for_user(user_id), parse_mode='Markdown', disable_web_page_preview=True)
-            return
-
-        # Check protection for number lookup
-        if service_key == "numberinfo" and is_number_protected(query_clean):
-            markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton("🛡️ PROTECT MY NUMBER", callback_data="protect"))
-            markup.add(InlineKeyboardButton("🔙 MAIN MENU", callback_data="main_menu"))
-            bot.reply_to(message, f"""
-🛡️ *PROTECTED NUMBER*
-
-📱 `{query_clean}`
-
-This number is protected.
-
-Details hidden.
-
-Protect your number for ₹59!
-""", reply_markup=markup, parse_mode='Markdown')
-            return
-
-        user_cooldown[user_id] = time.time()
-        loading_msg = bot.reply_to(message, f"{service.get('emoji', '🔍')} *Searching...*", parse_mode='Markdown')
-
-        animation_thread = threading.Thread(
-            target=animated_loading,
-            args=(message.chat.id, loading_msg.message_id, stop_animation, service.get('emoji', '🔍')),
-            daemon=True
-        )
-        animation_thread.start()
-
-        time.sleep(0.8)
-
-        try:
-            result = call_lookup_api(service_key, query_clean)
-        except Exception as api_err:
-            print(f"Lookup API exception: {api_err}")
-            result = {"error": f"api_exception_{api_err}"}
-
-        stop_animation_safely(stop_animation, animation_thread)
-
-        if is_no_data_response(result):
-            output = f"""
-❌ *NO DATA FOUND*
-━━━━━━━━━━━━━━━━━━{service.get('emoji', '🔍')} Query: `{query_clean}`
-
-No information found.
-Please verify the query and try again.
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=0)
-            return
-
-        if not result or result.get('error'):
-            output = f"""
-❌ *API RESPONSE*
-━━━━━━━━━━━━━━━━━━
-
-{service.get('emoji', '🔍')} Query: `{query_clean}`
-
-📄 *Response:*
-{format_json_for_telegram(result or {"error": "No response"})}
-
-💎 Credits NOT deducted
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=0)
-            return
-
-        if not isinstance(result, dict):
-            result = {"response": str(result)}
-
-        if has_valid_results(result):
-            if not unlimited_active:
-                if not deduct_credits(user_id, cost):
-                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
-                    return
-            increment_total_searches(user_id)
-            output = format_lookup_result(result, service_key, query_clean, user_id, unlimited_active, unlimited_expiry)
-            send_or_edit_long_message(message.chat.id, loading_msg.message_id, output, reply_markup=lookup_result_markup(), parse_mode='Markdown')
-            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=True, lookup_type=service_key, credits_used=cost if not unlimited_active else 0)
-        else:
-            if not unlimited_active:
-                if not deduct_credits(user_id, cost):
-                    safe_edit_message(message.chat.id, loading_msg.message_id, "❌ *Failed to deduct credit. Please try again.*", parse_mode='Markdown')
-                    return
-            increment_total_searches(user_id)
-            updated_total = get_total_credits(user_id)
-            output = f"""
-{service.get('emoji', '🔍')} *{service.get('name', service_key).upper()}*
-━━━━━━━━━━━━━━━━━━
-
-Query: `{query_clean}`
-
-📄 *API Response:*
-{format_json_for_telegram(result)}
-
-━━━━━━━━━━━━━━━━━━
-💎 Used: `{0 if unlimited_active else cost}`
-💎 Left: `{updated_total}`
-{footer()}
-"""
-            safe_edit_message(message.chat.id, loading_msg.message_id, output, parse_mode='Markdown')
-            record_search_for_daily_report(user_id, message.from_user.username, message.from_user.first_name, query_clean, found=False, lookup_type=service_key, credits_used=cost if not unlimited_active else 0)
-
-    except Exception as e:
-        print(f"process_lookup critical error: {e}")
-        try:
-            if loading_msg:
-                safe_edit_message(
-                    message.chat.id,
-                    loading_msg.message_id,
-                    f"❌ *Search failed!*\n\nError: `{str(e)[:100]}`\n\nCredits NOT deducted.\nPlease try again.",
-                    parse_mode='Markdown'
-                )
-            else:
-                bot.reply_to(message, f"❌ *Search failed!* Please try again.",
-                             parse_mode='Markdown')
-        except Exception as inner:
-            print(f"Error notifying user: {inner}")
-
-    finally:
-        stop_animation_safely(stop_animation, animation_thread)
-        remove_active_session(user_id)
-
-# ==================== ANIMATED LOADING ====================
-def update_loading_animation(chat_id, message_id, stage, emoji="🔍"):
-    dots = ["", ".", "..", "..."]
-    dot = dots[stage % 4]
-    try:
-        bot.edit_message_text(f"{emoji} *Searching{dot}*", chat_id, message_id, parse_mode='Markdown')
-        return True
-    except Exception as e:
-        err = str(e).lower()
-        if "message is not modified" in err:
-            return True
-        elif "message to edit not found" in err or "message can't be edited" in err or "message identifier is not specified" in err:
-            return False
-        else:
-            print(f"Animation update error: {e}")
-            return True
-
-def animated_loading(chat_id, message_id, stop_event, emoji="🔍"):
-    stage = 0
-    while not stop_event.is_set():
-        try:
-            should_continue = update_loading_animation(chat_id, message_id, stage, emoji)
-            if not should_continue:
-                return
-            stage += 1
-            for _ in range(5):
-                if stop_event.is_set():
-                    return
-                time.sleep(0.1)
-        except Exception as e:
-            print(f"Animation thread stopping: {e}")
-            return
-
-def stop_animation_safely(stop_event, thread):
-    try:
-        stop_event.set()
-        if thread and thread.is_alive():
-            thread.join(timeout=3)
-    except Exception as e:
-        print(f"Stop animation error: {e}")
-
 # ==================== FLASK WEBHOOK ====================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TraceX Bot v11.0.9 - 12 Lookup Services - Running!"
+    return "TraceX Bot v11.0.10 - 12 Lookup Services - Running!"
 
 def keep_alive():
     def run():
@@ -3251,7 +3256,10 @@ if __name__ == "__main__":
     for key, svc in LOOKUP_SERVICES.items():
         print(f"   • {svc['emoji']} {svc['name']} — ₹{svc['cost']}")
     print("=" * 60)
-    print("✅ Bot is running! Press Ctrl+C to stop.")
+    print("🔍 FIXES IN v11.0.10:")
+    print("   • Fixed 'Unknown command' bug for lookup inputs")
+    print("   • text_handler now checks dict state correctly")
+    print("   • All 12 services working properly")
     print("=" * 60)
 
     keep_alive()
