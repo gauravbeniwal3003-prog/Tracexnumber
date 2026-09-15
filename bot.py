@@ -153,8 +153,8 @@ LOOKUP_SERVICES = {
 }
 
 PAYMENT_QR_IMAGE = get_env_var("PAYMENT_QR_IMAGE", required=False, default="payment_qr.png")
-WEBSITE_URL = get_env_var("WEBSITE_URL", required=False, default="https://tracexdata.online")
-WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=False, default="https://tracexdata.online/register")
+WEBSITE_URL = get_env_var("WEBSITE_URL", required=False, default="https://gauravbeniwal.online/lookupportal")
+WEBSITE_REGISTRATION_URL = get_env_var("WEBSITE_REGISTRATION_URL", required=False, default="https://gauravbeniwal.online/lookupportal/register")
 GROUP_LINK = get_env_var("GROUP_LINK", required=False, default="https://t.me/Gaurav_beni_0001")
 
 BOT_VERSION = "11.0.11"
